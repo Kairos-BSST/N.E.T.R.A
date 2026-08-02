@@ -20,9 +20,9 @@ import os
 import time
 from typing import Callable, Optional
 
-from config import Config
-from gcs_client import GCSClient
-from state_tracker import StateTracker
+from cloud_integration.config import Config
+from cloud_integration.gcs_client import GCSClient
+from cloud_integration.state_tracker import StateTracker
 
 logger = logging.getLogger("netra.video_fetcher")
 

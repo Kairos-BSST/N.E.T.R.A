@@ -17,7 +17,7 @@ Usage:
 import argparse
 import logging
 
-from video_fetcher import VideoFetcher
+from cloud_integration.video_fetcher import VideoFetcher
 
 logging.basicConfig(
     level=logging.INFO,
