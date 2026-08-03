@@ -1,15 +1,16 @@
 """
 test_api.py
 -------------
-Tests the REST API endpoints using FastAPI's TestClient, with GCS fully
-mocked out. This proves the endpoints work correctly before you ever
-point them at a real bucket.
+Tests the REST API endpoints using FastAPI's TestClient, with the Google
+Drive API fully mocked out. This proves the endpoints work correctly
+before you ever connect a real Google account.
 
 Run with: python -m pytest tests/test_api.py -v
 """
 
 import os
 import sys
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -19,78 +20,85 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 class TestAPI(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        # Patch GCS before importing api.py, since api.py builds a
-        # VideoFetcher (and therefore a GCSClient) at import time.
-        cls.patcher_validate = patch("gcs_client.Config.validate", return_value=None)
-        cls.patcher_storage = patch("gcs_client.storage.Client")
-        cls.patcher_validate.start()
-        cls.mock_storage_client = cls.patcher_storage.start()
-
         import importlib
-        import cloud_integration.api as api_module
-        importlib.reload(api_module)  # ensure it picks up the patched Client
+        import api as api_module
+        importlib.reload(api_module)
 
         from fastapi.testclient import TestClient
         cls.api_module = api_module
         cls.client = TestClient(api_module.app)
 
     def setUp(self):
-        # Redirect state to a fresh temp file for every test so leftover
-        # state from a previous test run (or a real run of the API) can
-        # never leak in and make these tests flaky.
-        import tempfile
-        self.api_module._fetcher.state.state_file_path = tempfile.mktemp(suffix=".json")
-        self.api_module._fetcher.state._state = {}
-        self.api_module._last_fetch_new_videos.clear()
+        # Fresh state file per test so nothing leaks between tests or
+        # between test runs.
+        self.api_module.state.state_file_path = tempfile.mktemp(suffix=".json")
+        self.api_module.state._state = {}
 
-    @classmethod
-    def tearDownClass(cls):
-        cls.patcher_validate.stop()
-        cls.patcher_storage.stop()
-
-    def test_health_ok(self):
-        resp = self.client.get("/health")
+    def test_serves_frontend(self):
+        resp = self.client.get("/")
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.json()["status"], "ok")
+        self.assertIn("text/html", resp.headers["content-type"])
 
-    def test_fetch_returns_new_videos(self):
-        blob = MagicMock()
-        blob.name = "camera1/clip.mp4"
-
-        with patch.object(self.api_module._fetcher.gcs, "list_new_videos", return_value=[blob]), \
-             patch.object(self.api_module._fetcher.gcs, "download_video", return_value=999):
-            resp = self.client.post("/fetch")
-
+    def test_auth_status_not_connected_by_default(self):
+        resp = self.client.get("/auth/google/status")
         self.assertEqual(resp.status_code, 200)
-        body = resp.json()
-        self.assertEqual(body["new_videos_count"], 1)
-        self.assertEqual(body["new_videos"][0]["blob_name"], "camera1/clip.mp4")
+        self.assertEqual(resp.json(), {"connected": False})
 
-    def test_videos_list_reflects_state(self):
-        self.api_module._fetcher.state.mark_fetched("camera1/x.mp4", "/tmp/x.mp4", 10)
-        resp = self.client.get("/videos")
-        self.assertEqual(resp.status_code, 200)
-        self.assertIn("camera1/x.mp4", resp.json())
+    def test_login_redirects_to_google(self):
+        with patch.object(self.api_module.drive_auth, "get_authorization_url",
+                           return_value=("https://accounts.google.com/fake", "state123")):
+            resp = self.client.get("/auth/google/login", follow_redirects=False)
 
-    def test_signed_url_endpoint(self):
-        with patch.object(self.api_module._fetcher.gcs, "generate_signed_url",
-                           return_value="https://storage.googleapis.com/fake-signed-url"):
-            resp = self.client.get("/videos/signed-url", params={"blob_name": "camera1/clip.mp4"})
+        self.assertEqual(resp.status_code, 307)
+        self.assertEqual(resp.headers["location"], "https://accounts.google.com/fake")
+        self.assertEqual(resp.cookies.get("oauth_state"), "state123")
 
-        self.assertEqual(resp.status_code, 200)
-        body = resp.json()
-        self.assertEqual(body["blob_name"], "camera1/clip.mp4")
-        self.assertTrue(body["signed_url"].startswith("https://"))
+    def test_drive_files_requires_connection(self):
+        resp = self.client.get("/drive/files")
+        self.assertEqual(resp.status_code, 401)
 
-    def test_upload_endpoint(self):
-        with patch.object(self.api_module._fetcher.gcs, "upload_file") as mock_upload:
-            resp = self.client.post("/upload", json={
-                "local_path": "/tmp/fake.mp4",
-                "destination_blob_name": "processed/fake.mp4",
-            })
+    def test_full_oauth_and_fetch_flow(self):
+        fake_creds = MagicMock()
+        fake_creds.expired = False
 
-        self.assertEqual(resp.status_code, 200)
-        mock_upload.assert_called_once_with("/tmp/fake.mp4", "processed/fake.mp4")
+        # Step 1: simulate the OAuth callback succeeding
+        with patch.object(self.api_module.drive_auth, "exchange_code_for_credentials", return_value=fake_creds):
+            resp = self.client.get(
+                "/auth/google/callback",
+                params={"code": "fakecode", "state": "fakestate"},
+                follow_redirects=False,
+            )
+        self.assertEqual(resp.status_code, 307)
+        session_cookie = resp.cookies.get("netra_session")
+        self.assertIsNotNone(session_cookie)
+        self.client.cookies.set("netra_session", session_cookie)
+
+        # Step 2: list files using the now-connected session
+        with patch.object(self.api_module.drive_auth, "get_credentials", return_value=fake_creds), \
+             patch.object(self.api_module, "DriveClient") as MockDriveClient:
+            instance = MockDriveClient.return_value
+            instance.list_video_files.return_value = [
+                {"id": "abc123", "name": "cam1.mp4", "size": "1048576", "mimeType": "video/mp4"}
+            ]
+            resp2 = self.client.get("/drive/files")
+            self.assertEqual(resp2.status_code, 200)
+            self.assertEqual(resp2.json()["files"][0]["name"], "cam1.mp4")
+
+            # Step 3: fetch the file
+            instance.download_file.return_value = 1048576
+            resp3 = self.client.post("/drive/fetch", json={"file_id": "abc123", "file_name": "cam1.mp4"})
+            self.assertEqual(resp3.status_code, 200)
+            body = resp3.json()
+            self.assertEqual(body["status"], "fetched")
+            self.assertEqual(body["size_bytes"], 1048576)
+
+        # Step 4: confirm it shows up in /videos
+        resp4 = self.client.get("/videos")
+        self.assertIn("abc123", resp4.json())
+
+    def test_fetch_requires_connection(self):
+        resp = self.client.post("/drive/fetch", json={"file_id": "x", "file_name": "x.mp4"})
+        self.assertEqual(resp.status_code, 401)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,43 @@
+# --- Secrets / credentials (NEVER commit these) ---
+.env
+.env.*
+!.env.example
+google_oauth_client_secret.json
+*client_secret*.json
+*.pem
+*.key
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# --- Virtual environments ---
+venv/
+env/
+ENV/
+.venv/
+
+# --- Project-specific runtime/data ---
+downloaded_videos/
+*.mp4
+*.mov
+*.avi
+
+# --- Logs ---
+*.log
+
+# --- OS / editor junk ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
