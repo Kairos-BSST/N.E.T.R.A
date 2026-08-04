@@ -1,21 +1,10 @@
 """
 config.py
 ---------
-Central configuration for the N.E.T.R.A Drive integration.
+Central configuration for the N.E.T.R.A Signal Intake backend.
 
 Everything is loaded from environment variables (or a local .env file) so
 credentials are never hard-coded into source code.
-
-Required:
-    GOOGLE_OAUTH_CLIENT_SECRETS_FILE -> Path to your OAuth client JSON
-                                         (Google Cloud Console -> Credentials)
-
-Optional (sensible defaults provided):
-    GOOGLE_OAUTH_REDIRECT_URI -> Must exactly match what you registered in
-                                 Google Cloud Console (default assumes local dev)
-    LOCAL_DRIVE_DOWNLOAD_DIR  -> Where fetched Drive videos are saved locally
-    STATE_FILE_PATH           -> Tracks which Drive files have already been fetched
-    SESSION_COOKIE_NAME       -> Name of the cookie storing the OAuth session id
 """
 
 import os
@@ -33,7 +22,23 @@ class Config:
     SESSION_COOKIE_NAME: str = os.getenv("SESSION_COOKIE_NAME", "netra_session")
 
     LOCAL_DRIVE_DOWNLOAD_DIR: str = os.getenv("LOCAL_DRIVE_DOWNLOAD_DIR", "./downloaded_videos/drive")
+    LOCAL_UPLOAD_DIR: str = os.getenv("LOCAL_UPLOAD_DIR", "./downloaded_videos/uploads")
     STATE_FILE_PATH: str = os.getenv("STATE_FILE_PATH", "./fetch_state.json")
+
+    # Max upload size in bytes (default 2 GB). Override with MAX_UPLOAD_BYTES.
+    MAX_UPLOAD_BYTES: int = int(os.getenv("MAX_UPLOAD_BYTES", str(2 * 1024 * 1024 * 1024)))
+
+    # Common video containers / codecs. MIME video/* is also accepted.
+    ALLOWED_VIDEO_EXTENSIONS: frozenset = frozenset({
+        ".mp4", ".mov", ".avi", ".mkv", ".webm", ".flv", ".wmv", ".m4v",
+        ".mpeg", ".mpg", ".mpe", ".3gp", ".3g2", ".ts", ".mts", ".m2ts",
+        ".ogv", ".vob", ".asf", ".f4v", ".mxf", ".rm", ".rmvb", ".divx",
+    })
+
+    @classmethod
+    def ensure_storage_dirs(cls) -> None:
+        os.makedirs(cls.LOCAL_DRIVE_DOWNLOAD_DIR, exist_ok=True)
+        os.makedirs(cls.LOCAL_UPLOAD_DIR, exist_ok=True)
 
     @classmethod
     def validate_drive(cls) -> None:
@@ -49,6 +54,6 @@ class Config:
                 f"GOOGLE_OAUTH_CLIENT_SECRETS_FILE points to a file that does not exist: "
                 f"{cls.GOOGLE_OAUTH_CLIENT_SECRETS_FILE}"
             )
-        os.makedirs(cls.LOCAL_DRIVE_DOWNLOAD_DIR, exist_ok=True)
-        
-print("REDIRECT URI IN USE:", Config.GOOGLE_OAUTH_REDIRECT_URI)  
+        cls.ensure_storage_dirs()
+
+print("REDIRECT URI IN USE:", Config.GOOGLE_OAUTH_REDIRECT_URI)

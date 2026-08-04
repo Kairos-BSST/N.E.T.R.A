@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 class TestDriveClient(unittest.TestCase):
     def _make_client(self, mock_service):
         with patch("drive_client.build", return_value=mock_service):
-            from cloud_integration.drive_client import DriveClient
+            from drive_client import DriveClient
             return DriveClient(credentials=MagicMock())
 
     def test_list_video_files_uses_video_mime_filter(self):

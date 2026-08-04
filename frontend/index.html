@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Signal Intake</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+
+<div class="bg-dynamic">
+  <span class="blob-1"></span>
+  <span class="blob-2"></span>
+  <span class="blob-3"></span>
+</div>
+
+<div class="app">
+
+  <header>
+    <div class="brand">
+      <div class="brand-mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#3FE8D0" stroke-width="1.6"><path d="M2 12c2-4 5-6 10-6s8 2 10 6c-2 4-5 6-10 6s-8-2-10-6z"/><circle cx="12" cy="12" r="2.4"/></svg>
+      </div>
+      <div>
+        <div class="brand-name">SIGNAL INTAKE</div>
+        <div class="brand-sub">VIDEO SOURCE CONSOLE</div>
+      </div>
+    </div>
+    <button class="back-btn" id="backBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      BACK
+    </button>
+  </header>
+
+  <section id="hub">
+    <h1 class="hub-title">Select where the video feed comes from. <span>The console adapts to whatever you pick.</span></h1>
+
+    <div class="cards">
+      <div class="card" data-source="live" tabindex="0">
+        <div class="card-index">SOURCE / 01</div>
+        <div class="card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.6"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+        </div>
+        <div class="card-title">Live CCTV</div>
+        <div class="card-desc">Connect Hikvision, Dahua, CP Plus, custom RTSP, or a local webcam — same AI pipeline.</div>
+        <div class="card-cta">CONNECT STREAM <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      </div>
+
+      <div class="card" data-source="upload" tabindex="0">
+        <div class="card-index">SOURCE / 02</div>
+        <div class="card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.6"><path d="M12 16V4M6 10l6-6 6 6"/><path d="M4 18v1a2 2 0 002 2h12a2 2 0 002-2v-1"/></svg>
+        </div>
+        <div class="card-title">Upload Video</div>
+        <div class="card-desc">Send a video file straight from your device for analysis.</div>
+        <div class="card-cta">UPLOAD FILE <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      </div>
+
+      <div class="card" data-source="drive" tabindex="0">
+        <div class="card-index">SOURCE / 03</div>
+        <div class="card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.6"><path d="M12 2l9 15H3L12 2z"/><path d="M8 13l-3 4h14l-3-4"/></svg>
+        </div>
+        <div class="card-title">Fetch from Drive</div>
+        <div class="card-desc">Authorize Drive access and pull a file directly by API.</div>
+        <div class="card-cta">CONNECT DRIVE <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="workspace">
+
+    <div class="ws-header">
+      <div class="ws-source-num" id="wsSourceNum">SOURCE / 01</div>
+      <h2 class="ws-source-name" id="wsSourceName">Live</h2>
+      <p class="ws-source-desc" id="wsSourceDesc">Connect to a live camera feed over an RTSP stream URL.</p>
+    </div>
+
+    <!-- LIVE CCTV panel -->
+    <div class="ws-grid" data-panel="live">
+      <div>
+        <div class="panel-label">CONNECTION METHOD</div>
+        <div class="live-methods" id="liveMethods" role="tablist">
+          <button type="button" class="live-method active" data-method="brand">Brand RTSP</button>
+          <button type="button" class="live-method" data-method="custom">Custom RTSP</button>
+          <button type="button" class="live-method" data-method="webcam">Local Webcam</button>
+        </div>
+
+        <div class="live-form" data-live-form="brand">
+          <label class="field">
+            <span>Brand</span>
+            <select id="cctvBrand">
+              <option value="hikvision">Hikvision (recommended path)</option>
+              <option value="dahua">Dahua</option>
+              <option value="cp_plus">CP Plus</option>
+            </select>
+          </label>
+          <div class="field-row">
+            <label class="field">
+              <span>IP Address</span>
+              <input type="text" id="cctvIp" placeholder="192.168.1.64" autocomplete="off" />
+            </label>
+            <label class="field field-narrow">
+              <span>Port</span>
+              <input type="number" id="cctvPort" value="554" min="1" max="65535" />
+            </label>
+          </div>
+          <div class="field-row">
+            <label class="field">
+              <span>Username</span>
+              <input type="text" id="cctvUser" placeholder="admin" autocomplete="username" />
+            </label>
+            <label class="field">
+              <span>Password</span>
+              <input type="password" id="cctvPass" placeholder="••••••••" autocomplete="current-password" />
+            </label>
+          </div>
+          <p class="url-preview" id="rtspPreview">RTSP URL will appear here</p>
+        </div>
+
+        <div class="live-form" data-live-form="custom" hidden>
+          <label class="field">
+            <span>Custom RTSP URL</span>
+            <input type="text" id="rtspInput" placeholder="rtsp://user:pass@192.168.1.20:554/stream1" />
+          </label>
+        </div>
+
+        <div class="live-form" data-live-form="webcam" hidden>
+          <p class="side-note">Uses <b>cv2.VideoCapture(0)</b> on the server and feeds the same AI pipeline as CCTV — ideal for local testing without a camera.</p>
+          <label class="field field-narrow">
+            <span>Device index</span>
+            <input type="number" id="webcamIndex" value="0" min="0" max="10" />
+          </label>
+        </div>
+
+        <div class="live-actions">
+          <button class="btn btn-live" id="liveConnectBtn" type="button">CONNECT</button>
+          <button class="btn btn-ghost" id="liveDisconnectBtn" type="button" disabled>DISCONNECT</button>
+          <button class="btn btn-live" id="liveStartBtn" type="button" disabled>START MONITORING</button>
+          <button class="btn btn-ghost" id="liveStopBtn" type="button" disabled>STOP MONITORING</button>
+        </div>
+
+        <div class="frame" id="liveFrame">
+          <div class="live-tag" id="liveTag">LIVE</div>
+          <img id="liveStreamImg" alt="Live processed feed" hidden />
+          <div class="frame-msg" id="liveMsg">NO SIGNAL — choose a method and connect</div>
+        </div>
+        <p class="live-error" id="liveError" hidden></p>
+      </div>
+      <div>
+        <div class="panel-label">LIVE STATUS</div>
+        <div class="meta-row"><span>Connection Status</span><span id="metaStatus">Disconnected</span></div>
+        <div class="meta-row"><span>Current Source</span><span id="metaSource">—</span></div>
+        <div class="meta-row"><span>Processing Status</span><span id="metaProcessing">Idle</span></div>
+        <div class="meta-row"><span>FPS</span><span id="metaFps">—</span></div>
+        <div class="meta-row"><span>Frame Count</span><span id="metaFrames">0</span></div>
+        <div class="meta-row"><span>Resolution</span><span id="metaRes">—</span></div>
+        <div class="meta-row"><span>Model</span><span id="metaModel">—</span></div>
+        <p class="side-note" style="margin-top:16px;">Frames from CCTV / webcam go through the shared <b>VideoSource → frame_processor</b> path used by upload and Drive — no duplicated AI code.</p>
+      </div>
+    </div>
+
+    <!-- UPLOAD panel markup -->
+    <div class="ws-grid" data-panel="upload" style="display:none;">
+      <div>
+        <div class="panel-label">UPLOAD VIDEO</div>
+        <div class="dropzone" id="dropzone">
+          <div class="dropzone-title">Drag and drop a video file</div>
+          <div class="dropzone-sub">or click to browse — any video format (MP4, MOV, AVI, MKV, WEBM, …)</div>
+          <input type="file" id="fileInput" accept="video/*,.mp4,.mov,.avi,.mkv,.webm,.flv,.wmv,.m4v,.mpeg,.mpg,.3gp,.ts,.mts,.m2ts,.ogv,.vob,.asf,.f4v,.mxf">
+        </div>
+        <div id="fileRow"></div>
+      </div>
+      <div>
+        <div class="panel-label">UPLOAD DETAILS</div>
+        <div class="meta-row"><span>File</span><span id="metaFile">—</span></div>
+        <div class="meta-row"><span>Size</span><span id="metaSize">—</span></div>
+        <div class="meta-row"><span>Status</span><span id="metaUploadStatus">Waiting</span></div>
+        <p class="side-note" style="margin-top:16px;">Files are saved on the Signal Intake backend via <b>POST /upload</b>, then handed to the shared model analysis placeholder.</p>
+      </div>
+    </div>
+
+    <!-- DRIVE panel markup -->
+    <div class="ws-grid" data-panel="drive" style="display:none;">
+      <div>
+        <div class="panel-label">GOOGLE DRIVE</div>
+        <div class="drive-connect" id="driveConnect">
+          <p>Authorize access to your Drive to browse and fetch video files by API.</p>
+          <button class="btn btn-drive" id="driveConnectBtn">CONNECT GOOGLE DRIVE</button>
+        </div>
+        <div class="drive-grid" id="driveGrid"></div>
+      </div>
+      <div>
+        <div class="panel-label">FETCH STATUS</div>
+        <div class="meta-row"><span>Account</span><span id="metaAccount">Not connected</span></div>
+        <div class="meta-row"><span>Selected file</span><span id="metaDriveFile">—</span></div>
+        <div class="meta-row"><span>Status</span><span id="metaDriveStatus">Idle</span></div>
+        <p class="side-note" style="margin-top:16px;">Live OAuth flow via Google Drive API (<b>files.list</b> / <b>files.get</b>). Fetched files are also pushed into the shared model analysis placeholder.</p>
+      </div>
+    </div>
+
+    <div class="analysis-panel" id="analysisPanel">
+      <div class="panel-label">MODEL ANALYSIS</div>
+      <div class="analysis-status">
+        <div class="analysis-pill" id="analysisPill">
+          <span class="dot"></span>
+          <span id="analysisPillText">IDLE — waiting for input</span>
+        </div>
+        <p class="analysis-msg" id="analysisMsg">
+          Every source (live CCTV, local upload, Drive) feeds the shared VideoSource → frame_processor path. Connect a live feed and start monitoring to see annotated frames here.
+        </p>
+        <div class="analysis-meta" id="analysisMeta">job — · source —</div>
+      </div>
+    </div>
+
+  </section>
+
+</div>
+
+<script src="/js/analysis.js"></script>
+<script src="/js/live.js"></script>
+<script src="/js/upload.js"></script>
+<script src="/js/drive.js"></script>
+<script src="/js/app.js"></script>
+
+</body>
+</html>

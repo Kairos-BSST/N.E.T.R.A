@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import cloud_integration.drive_auth as drive_auth
+import drive_auth
 
 
 class TestDriveAuth(unittest.TestCase):
