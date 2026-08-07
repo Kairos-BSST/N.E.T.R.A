@@ -12,10 +12,12 @@ Models:
 Designed for CPU-only / low-memory systems.
 
 NOTE:
-PaddleOCR text recognition is intentionally disabled on low-memory
-systems. OCR.pt still detects number plates and returns their bounding
-boxes. Character recognition can be enabled separately on a machine
-with sufficient RAM.
+Number-plate handling is a two-stage pipeline:
+  1. OCR.pt (YOLO)               -> detects the plate bounding box.
+  2. PaddleOCR recognition model -> reads the text out of the crop
+                                     produced by stage 1.
+PaddleOCR is initialized once (singleton) and only ever runs on the
+small cropped plate region, never on the full frame.
 """
 
 from __future__ import annotations
@@ -63,6 +65,7 @@ _lock = threading.RLock()
 
 _weapon_model = None
 _ocr_detection_model = None
+_ocr_recognition_model = None
 _anomaly_model = None
 _violence_model = None
 _violence_transform = None
@@ -72,6 +75,7 @@ _torch = None
 _model_status: Dict[str, str] = {
     "weapon": "not_loaded",
     "ocr": "not_loaded",
+    "ocr_recognition": "not_loaded",
     "anomaly": "not_loaded",
     "violence": "not_loaded",
 }
@@ -310,12 +314,12 @@ def _load_weapon_model() -> bool:
         return False
 
 
-def _load_ocr_model() -> bool:
+def _load_ocr_detector() -> bool:
     """
-    Load only the custom YOLO number-plate detector.
+    Load the custom YOLO number-plate detector (OCR.pt).
 
-    PaddleOCR recognition is deliberately not initialized here because
-    the PaddleOCR v6 pipeline requires substantially more memory.
+    Stage 1 only: this model produces bounding boxes for plates. It is
+    never used for text recognition.
     """
 
     global _ocr_detection_model
@@ -353,6 +357,76 @@ def _load_ocr_model() -> bool:
         )
 
         return False
+
+
+def _load_ocr_recognizer() -> bool:
+    """
+    Load the official PaddleOCR English text-recognition model.
+
+    Stage 2 only: this model reads text from an already-cropped plate
+    image produced by the YOLO detector. It never runs detection and
+    never sees the full frame.
+
+    Uses the PaddleOCR v3 API. The old ``show_log`` constructor
+    argument (and other now-removed kwargs) is not passed - PaddleOCR
+    v3 raises ``ValueError: Unknown argument`` if you do.
+
+    Initialized exactly once (singleton) and cached in
+    ``_ocr_recognition_model`` for the lifetime of the process.
+    """
+
+    global _ocr_recognition_model
+
+    if _ocr_recognition_model is not None:
+        return True
+
+    if _model_status["ocr_recognition"] == "failed":
+        return False
+
+    try:
+        from paddleocr import TextRecognition
+
+        # TextRecognition is the standalone PaddleOCR v3 module for
+        # the recognition step only (no detection, no doc/orientation
+        # preprocessing) - exactly what we need for a pre-cropped
+        # plate image. Only officially supported v3 kwargs are used.
+        _ocr_recognition_model = TextRecognition(
+            model_name="en_PP-OCRv4_mobile_rec",
+        )
+
+        _model_status["ocr_recognition"] = "loaded"
+
+        logger.info(
+            "PaddleOCR text recognition model loaded on CPU."
+        )
+
+        return True
+
+    except Exception as exc:
+        _model_status["ocr_recognition"] = "failed"
+        _model_errors["ocr_recognition"] = str(exc)
+
+        logger.exception(
+            "Unable to load PaddleOCR recognition model"
+        )
+
+        return False
+
+
+def _load_ocr_model() -> bool:
+    """
+    Load both stages of the number-plate pipeline:
+      - YOLO detector (OCR.pt)
+      - PaddleOCR recognizer
+
+    Both are singletons; calling this repeatedly after a successful
+    load is a cheap no-op.
+    """
+
+    detector_ok = _load_ocr_detector()
+    recognizer_ok = _load_ocr_recognizer()
+
+    return detector_ok and recognizer_ok
 
 
 # Compatibility with the function name used during testing.
@@ -529,11 +603,19 @@ def model_status() -> Dict[str, Any]:
     """
 
     with _lock:
+        recognition_enabled = (
+            _model_status["ocr_recognition"] == "loaded"
+        )
+
         return {
             "models": dict(_model_status),
             "errors": dict(_model_errors),
             "device": DEVICE,
-            "ocr_text_recognition": "disabled_low_memory",
+            "ocr": _model_status["ocr"],
+            "ocr_recognition": _model_status["ocr_recognition"],
+            "ocr_text_recognition": (
+                "enabled" if recognition_enabled else "disabled"
+            ),
         }
 
 
@@ -621,15 +703,70 @@ def _run_weapon_detection(
 # Number-plate detection
 # ============================================================
 
+def _recognize_plate_text(
+    plate_crop: np.ndarray,
+) -> Tuple[str | None, float]:
+    """
+    Run PaddleOCR recognition on an already-cropped plate image.
+
+    Stage 2 only - no detection happens here, the crop is assumed to
+    already tightly bound the plate (produced by the YOLO detector in
+    ``_run_ocr``).
+
+    Returns (plate_text, ocr_confidence). plate_text is None if
+    nothing could be recognized.
+    """
+
+    if _ocr_recognition_model is None:
+        return None, 0.0
+
+    rgb_crop = cv2.cvtColor(
+        plate_crop,
+        cv2.COLOR_BGR2RGB,
+    )
+
+    raw_results = _ocr_recognition_model.predict(
+        input=rgb_crop,
+    )
+
+    for item in raw_results:
+
+        # PaddleOCR v3 pipeline results support both dict-style
+        # access and a `.json` accessor depending on how they are
+        # produced; handle both defensively.
+        data = item
+
+        if hasattr(data, "json"):
+            data = data.json
+
+        if isinstance(data, dict) and "res" in data:
+            data = data["res"]
+
+        if isinstance(data, dict):
+            text = data.get("rec_text")
+            score = data.get("rec_score")
+        else:
+            text = getattr(data, "rec_text", None)
+            score = getattr(data, "rec_score", None)
+
+        if text:
+            return str(text).strip(), float(score or 0.0)
+
+    return None, 0.0
+
+
 def _run_ocr(
     frame: np.ndarray,
 ) -> List[Dict[str, Any]]:
     """
-    Detect number plates using OCR.pt.
+    Two-stage number-plate pipeline:
 
-    This stage currently performs plate localization only.
-    PaddleOCR character recognition is intentionally disabled on the
-    low-memory local environment.
+      1. OCR.pt (YOLO) detects plate bounding boxes.
+      2. Each detected plate is cropped and passed to PaddleOCR for
+         text recognition.
+
+    PaddleOCR only ever sees the small cropped plate region, never
+    the full frame.
     """
 
     if not _load_ocr_model():
@@ -692,12 +829,36 @@ def _run_ocr(
             box.conf[0]
         )
 
+        plate_number = None
+        ocr_confidence = 0.0
+        text_recognition = False
+
+        if _ocr_recognition_model is not None:
+
+            plate_crop = frame[y1:y2, x1:x2]
+
+            if plate_crop.size > 0:
+
+                try:
+                    plate_number, ocr_confidence = (
+                        _recognize_plate_text(plate_crop)
+                    )
+
+                    text_recognition = plate_number is not None
+
+                except Exception:
+                    logger.exception(
+                        "PaddleOCR recognition failed "
+                        "for a detected plate"
+                    )
+
         detections.append({
             "type": "number_plate",
-            "label": "PLATE",
-            "plate_number": None,
-            "text_recognition": False,
+            "label": plate_number or "PLATE",
+            "plate_number": plate_number,
+            "text_recognition": text_recognition,
             "confidence": confidence,
+            "ocr_confidence": round(ocr_confidence, 4),
             "bbox": [
                 x1,
                 y1,
@@ -919,10 +1080,16 @@ def _draw_detection(
         0.0,
     )
 
-    text = (
-        f"{label} "
-        f"{confidence:.2f}"
-    )
+    if (
+        detection_type == "number_plate"
+        and detection.get("plate_number")
+    ):
+        text = detection["plate_number"]
+    else:
+        text = (
+            f"{label} "
+            f"{confidence:.2f}"
+        )
 
     cv2.putText(
         frame,
@@ -1237,9 +1404,20 @@ def process_frame(
         },
 
         "ocr": {
-            "plate_detection": True,
-            "text_recognition": False,
-            "reason": "disabled_low_memory",
+            "plate_detection": (
+                _model_status["ocr"] == "loaded"
+            ),
+            "text_recognition": (
+                _model_status["ocr_recognition"] == "loaded"
+            ),
+            "reason": (
+                None
+                if _model_status["ocr_recognition"] == "loaded"
+                else _model_errors.get(
+                    "ocr_recognition",
+                    "not_loaded",
+                )
+            ),
         },
 
         "inference_ms": round(
