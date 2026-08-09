@@ -43,14 +43,40 @@ logger = logging.getLogger("netra.frame_processor")
 
 DEVICE = "cpu"
 
-WEAPON_CONFIDENCE = 0.45
-OCR_CONFIDENCE = 0.50
-ANOMALY_THRESHOLD = 0.01
+# Confidence/threshold tuning. Overridable via env so you can tune per
+# camera/site without touching code. NOTE: WEAPON_CONFIDENCE was previously
+# dropped to 0.25 to fix missed detections -- that widened the net and let
+# low-confidence false positives (POS terminals, dark phone cases, etc.)
+# through. 0.4 is a middle ground; raise it further if false positives
+# persist, at the cost of catching fewer marginal/occluded weapons.
+WEAPON_CONFIDENCE = float(os.getenv("WEAPON_CONFIDENCE", "0.4"))
+OCR_CONFIDENCE = float(os.getenv("OCR_CONFIDENCE", "0.50"))
 
-# CPU-friendly inference intervals
-WEAPON_INTERVAL = 3
+# ANOMALY_THRESHOLD was a hardcoded guess (0.01) in the original training
+# script, never statistically calibrated against real "normal" footage --
+# that's why it fires on frames that look totally normal to a human. This
+# needs to be calibrated per-camera: run calibrate_anomaly_threshold.py
+# (training/Anomaly_detection/) against a clip of normal footage and set
+# ANOMALY_THRESHOLD env var to roughly mean_error + 3*std_error from that
+# output. Left at 0.01 as a fallback only.
+ANOMALY_THRESHOLD = float(os.getenv("ANOMALY_THRESHOLD", "0.01"))
+
+# CPU-friendly inference intervals. These are now a SAFETY-NET ceiling, not
+# the primary gate -- see _frame_changed_significantly() below. Detection
+# still runs at least this often even on a static scene, but on frames that
+# differ meaningfully from the last-checked frame it runs immediately,
+# regardless of interval, so a fast-appearing threat isn't delayed waiting
+# for the interval to come around.
+WEAPON_INTERVAL = 5
 OCR_INTERVAL = 15
 ANOMALY_INTERVAL = 5
+
+# Minimum fraction of pixels that must change (0-1) between the last-CHECKED
+# frame and the current one for us to consider the scene "different enough"
+# to run the (expensive) weapon/anomaly models again outside of the fixed
+# interval above. Tune via env if your camera is noisy (raise it) or you
+# need to catch very subtle/slow changes (lower it).
+FRAME_DIFF_THRESHOLD = float(os.getenv("FRAME_DIFF_THRESHOLD", "0.03"))
 
 VIOLENCE_SEQUENCE_LENGTH = 16
 VIOLENCE_SAMPLE_INTERVAL = 2
@@ -59,6 +85,26 @@ VIOLENCE_RETAIN_FRAMES = 8
 
 # ============================================================
 # Global state
+#
+# IMPORTANT: only the MODELS (weapon/ocr/anomaly/violence + their load
+# status) live here as shared singletons -- that's correct, since loading
+# a multi-hundred-MB model per camera/job would be wasteful, and a loaded
+# model in eval() mode is safe to run concurrent inference against.
+#
+# Everything that represents ONE STREAM'S RUNNING STATE (frame counter,
+# last detections, violence frame buffer, scene-change baseline, stats)
+# used to live here too, as module-level globals. That was a real bug:
+# analysis_pipeline.py already runs one background thread PER uploaded
+# file, and every one of those threads called the same module-level
+# process_frame(), so two uploads analyzed at the same time would
+# silently corrupt each other's detections (job A's frame counter,
+# last-seen weapon boxes, violence buffer, etc. would bleed into job B's
+# results, and vice versa) with no error raised anywhere.
+#
+# Fixed by moving all per-stream state into the FrameProcessor class
+# below. Every analysis job / live camera session now creates its own
+# FrameProcessor() instance and calls instance.process_frame(...); the
+# models themselves stay shared module-level singletons.
 # ============================================================
 
 _lock = threading.RLock()
@@ -81,27 +127,6 @@ _model_status: Dict[str, str] = {
 }
 
 _model_errors: Dict[str, str] = {}
-
-_frame_counter = 0
-
-_violence_frames = deque(
-    maxlen=VIOLENCE_SEQUENCE_LENGTH
-)
-
-_last_weapon_detections: List[Dict[str, Any]] = []
-_last_ocr_detections: List[Dict[str, Any]] = []
-
-_last_anomaly_detected = False
-_last_anomaly_error = 0.0
-
-_last_violence_prediction = "COLLECTING"
-_last_violence_confidence = 0.0
-
-_stats: Dict[str, Any] = {
-    "frames_processed": 0,
-    "last_inference_ms": 0.0,
-    "detections_last_frame": 0,
-}
 
 
 # ============================================================
@@ -619,11 +644,6 @@ def model_status() -> Dict[str, Any]:
         }
 
 
-def get_stats() -> Dict[str, Any]:
-    with _lock:
-        return dict(_stats)
-
-
 # ============================================================
 # Weapon inference
 # ============================================================
@@ -934,10 +954,8 @@ def _run_anomaly(
 
 def _update_violence(
     frame: np.ndarray,
+    state: "FrameProcessor",
 ) -> Tuple[str, float]:
-
-    global _last_violence_prediction
-    global _last_violence_confidence
 
     if not _load_violence_model():
         return "UNAVAILABLE", 0.0
@@ -953,21 +971,21 @@ def _update_violence(
         image=rgb
     )["image"]
 
-    _violence_frames.append(
+    state.violence_frames.append(
         processed
     )
 
     if (
-        len(_violence_frames)
+        len(state.violence_frames)
         < VIOLENCE_SEQUENCE_LENGTH
     ):
         return (
-            _last_violence_prediction,
-            _last_violence_confidence,
+            state.last_violence_prediction,
+            state.last_violence_confidence,
         )
 
     clip = np.array(
-        _violence_frames
+        state.violence_frames
     )
 
     # (T, H, W, C) -> (1, C, T, H, W)
@@ -1007,7 +1025,7 @@ def _update_violence(
         prediction.item()
     )
 
-    _last_violence_confidence = float(
+    state.last_violence_confidence = float(
         confidence.item()
     )
 
@@ -1016,23 +1034,23 @@ def _update_violence(
     # 1 = noFight
 
     if prediction_id == 0:
-        _last_violence_prediction = "FIGHT"
+        state.last_violence_prediction = "FIGHT"
     else:
-        _last_violence_prediction = "NO FIGHT"
+        state.last_violence_prediction = "NO FIGHT"
 
     retained = list(
-        _violence_frames
+        state.violence_frames
     )[-VIOLENCE_RETAIN_FRAMES:]
 
-    _violence_frames.clear()
+    state.violence_frames.clear()
 
-    _violence_frames.extend(
+    state.violence_frames.extend(
         retained
     )
 
     return (
-        _last_violence_prediction,
-        _last_violence_confidence,
+        state.last_violence_prediction,
+        state.last_violence_confidence,
     )
 
 
@@ -1202,238 +1220,357 @@ def _draw_hud(
 # Main inference entry point
 # ============================================================
 
+class FrameProcessor:
+    """
+    One instance per analysis job / live camera session.
+
+    Holds all the state that used to be module-level globals (frame
+    counter, last detections, violence frame buffer, scene-change
+    baseline, per-stream stats), so multiple streams can be analyzed
+    concurrently -- by different upload jobs, or by different cameras --
+    without their results bleeding into each other.
+
+    The underlying models (weapon/ocr/anomaly/violence) are still shared
+    module-level singletons, loaded once regardless of how many
+    FrameProcessor instances exist -- that's intentional, models are
+    read-only at inference time and expensive to load per-stream.
+
+    Usage:
+        fp = FrameProcessor()
+        annotated, meta = fp.process_frame(frame, source_label="cam-1")
+    """
+
+    def __init__(self, label: str = "") -> None:
+        self.label = label
+        self._instance_lock = threading.Lock()
+
+        self.frame_counter = 0
+
+        self.violence_frames = deque(
+            maxlen=VIOLENCE_SEQUENCE_LENGTH
+        )
+
+        self.last_weapon_detections: List[Dict[str, Any]] = []
+        self.last_ocr_detections: List[Dict[str, Any]] = []
+
+        self.last_anomaly_detected = False
+        self.last_anomaly_error = 0.0
+
+        self.last_violence_prediction = "COLLECTING"
+        self.last_violence_confidence = 0.0
+
+        # Small downsized grayscale snapshot of the last frame that was
+        # actually run through the weapon/anomaly models -- used by
+        # _frame_changed_significantly() to decide whether the scene has
+        # moved on enough to warrant another inference pass before the
+        # fixed interval comes around. Per-instance so one camera's scene
+        # changes don't reset another camera's baseline.
+        self.last_checked_frame_small: Any = None
+
+        self.stats: Dict[str, Any] = {
+            "frames_processed": 0,
+            "last_inference_ms": 0.0,
+            "detections_last_frame": 0,
+        }
+
+    def get_stats(self) -> Dict[str, Any]:
+        with self._instance_lock:
+            return dict(self.stats)
+
+    def _frame_changed_significantly(self, frame: np.ndarray) -> bool:
+        """
+        Cheap scene-change check so we don't burn CPU re-running
+        weapon/anomaly models on frames that are near-identical to the
+        last one THIS stream checked. Any frame that DOES differ
+        meaningfully is checked immediately, regardless of the fixed
+        interval, so a threat that suddenly appears isn't delayed
+        waiting for the next scheduled interval tick.
+
+        Returns True on the very first frame of this stream, since
+        there's nothing yet to compare against.
+        """
+        small = cv2.resize(
+            cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY),
+            (48, 27),
+        )
+
+        if self.last_checked_frame_small is None:
+            self.last_checked_frame_small = small
+            return True
+
+        diff = cv2.absdiff(small, self.last_checked_frame_small)
+        changed_fraction = float(np.mean(diff > 15))
+
+        if changed_fraction >= FRAME_DIFF_THRESHOLD:
+            self.last_checked_frame_small = small
+            return True
+
+        return False
+
+    def process_frame(
+        self,
+        frame: np.ndarray,
+        *,
+        source_label: str = "",
+        draw: bool = True,
+    ) -> Tuple[np.ndarray, Dict[str, Any]]:
+
+        if (
+            frame is None
+            or not isinstance(frame, np.ndarray)
+            or frame.size == 0
+        ):
+            raise ValueError(
+                "process_frame requires a "
+                "non-empty numpy BGR frame"
+            )
+
+        start = time.perf_counter()
+
+        output_frame = frame.copy()
+
+        with self._instance_lock:
+            self.frame_counter += 1
+            frame_number = self.frame_counter
+
+        # Cheap scene-change check, computed once and reused by both the
+        # weapon and anomaly gates below.
+        scene_changed = self._frame_changed_significantly(frame)
+
+        # --------------------------------------------------------
+        # Weapon
+        # --------------------------------------------------------
+
+        if (
+            frame_number == 1
+            or scene_changed
+            or frame_number % WEAPON_INTERVAL == 0
+        ):
+
+            try:
+                self.last_weapon_detections = (
+                    _run_weapon_detection(frame)
+                )
+
+            except Exception:
+                logger.exception(
+                    "Weapon inference failed"
+                )
+
+        # --------------------------------------------------------
+        # Number plate
+        # --------------------------------------------------------
+
+        if (
+            frame_number == 1
+            or frame_number % OCR_INTERVAL == 0
+        ):
+
+            try:
+                self.last_ocr_detections = (
+                    _run_ocr(frame)
+                )
+
+            except Exception:
+                logger.exception(
+                    "Number-plate inference failed"
+                )
+
+        # --------------------------------------------------------
+        # Anomaly
+        # --------------------------------------------------------
+
+        if (
+            frame_number == 1
+            or scene_changed
+            or frame_number % ANOMALY_INTERVAL == 0
+        ):
+
+            try:
+                (
+                    self.last_anomaly_detected,
+                    self.last_anomaly_error,
+                ) = _run_anomaly(frame)
+
+            except Exception:
+                logger.exception(
+                    "Anomaly inference failed"
+                )
+
+        # --------------------------------------------------------
+        # Violence
+        # --------------------------------------------------------
+
+        violence_prediction = (
+            self.last_violence_prediction
+        )
+
+        violence_confidence = (
+            self.last_violence_confidence
+        )
+
+        if (
+            frame_number
+            % VIOLENCE_SAMPLE_INTERVAL
+            == 0
+        ):
+
+            try:
+                (
+                    violence_prediction,
+                    violence_confidence,
+                ) = _update_violence(frame, self)
+
+            except Exception:
+                logger.exception(
+                    "Violence inference failed"
+                )
+
+        # --------------------------------------------------------
+        # Combined detections
+        # --------------------------------------------------------
+
+        detections = (
+            list(self.last_weapon_detections)
+            + list(self.last_ocr_detections)
+        )
+
+        if draw:
+
+            for detection in detections:
+                _draw_detection(
+                    output_frame,
+                    detection,
+                )
+
+            _draw_hud(
+                output_frame,
+                source_label=source_label,
+                detections=len(detections),
+                anomaly=self.last_anomaly_detected,
+                anomaly_error=self.last_anomaly_error,
+                violence=violence_prediction,
+                violence_confidence=violence_confidence,
+            )
+
+        elapsed_ms = (
+            time.perf_counter()
+            - start
+        ) * 1000.0
+
+        with self._instance_lock:
+
+            self.stats["frames_processed"] += 1
+
+            self.stats["last_inference_ms"] = round(
+                elapsed_ms,
+                2,
+            )
+
+            self.stats["detections_last_frame"] = len(
+                detections
+            )
+
+            frames_processed = self.stats[
+                "frames_processed"
+            ]
+
+        meta = {
+            "detections": detections,
+
+            "weapon_detections": list(
+                self.last_weapon_detections
+            ),
+
+            "ocr_detections": list(
+                self.last_ocr_detections
+            ),
+
+            "anomaly": {
+                "detected": self.last_anomaly_detected,
+                "error": round(
+                    self.last_anomaly_error,
+                    6,
+                ),
+                "threshold": ANOMALY_THRESHOLD,
+            },
+
+            "violence": {
+                "prediction": violence_prediction,
+                "confidence": round(
+                    violence_confidence,
+                    4,
+                ),
+                "frames_collected": len(
+                    self.violence_frames
+                ),
+                "required_frames": (
+                    VIOLENCE_SEQUENCE_LENGTH
+                ),
+            },
+
+            "ocr": {
+                "plate_detection": (
+                    _model_status["ocr"] == "loaded"
+                ),
+                "text_recognition": (
+                    _model_status["ocr_recognition"] == "loaded"
+                ),
+                "reason": (
+                    None
+                    if _model_status["ocr_recognition"] == "loaded"
+                    else _model_errors.get(
+                        "ocr_recognition",
+                        "not_loaded",
+                    )
+                ),
+            },
+
+            "inference_ms": round(
+                elapsed_ms,
+                2,
+            ),
+
+            "frames_processed": frames_processed,
+
+            "model_status": model_status(),
+
+            "timestamp": datetime.now(
+                timezone.utc
+            ).isoformat(),
+
+            "source_label": source_label,
+        }
+
+        return output_frame, meta
+
+
+# ------------------------------------------------------------
+# Backward-compatible module-level API.
+#
+# A handful of older call sites may still call frame_processor.
+# process_frame(...)/get_stats() directly rather than creating their own
+# FrameProcessor(). Those keep working via one shared default instance,
+# but note this default instance has the SAME single-stream limitation
+# the old global-state code had -- any new caller that wants proper
+# multi-stream isolation should create its own FrameProcessor() instead.
+# ------------------------------------------------------------
+
+_default_processor = FrameProcessor(label="default")
+
+
 def process_frame(
     frame: np.ndarray,
     *,
     source_label: str = "",
     draw: bool = True,
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
-
-    global _frame_counter
-    global _last_weapon_detections
-    global _last_ocr_detections
-    global _last_anomaly_detected
-    global _last_anomaly_error
-
-    if (
-        frame is None
-        or not isinstance(frame, np.ndarray)
-        or frame.size == 0
-    ):
-        raise ValueError(
-            "process_frame requires a "
-            "non-empty numpy BGR frame"
-        )
-
-    start = time.perf_counter()
-
-    output_frame = frame.copy()
-
-    with _lock:
-        _frame_counter += 1
-        frame_number = _frame_counter
-
-    # --------------------------------------------------------
-    # Weapon
-    # --------------------------------------------------------
-
-    if (
-        frame_number == 1
-        or frame_number % WEAPON_INTERVAL == 0
-    ):
-
-        try:
-            _last_weapon_detections = (
-                _run_weapon_detection(frame)
-            )
-
-        except Exception:
-            logger.exception(
-                "Weapon inference failed"
-            )
-
-    # --------------------------------------------------------
-    # Number plate
-    # --------------------------------------------------------
-
-    if (
-        frame_number == 1
-        or frame_number % OCR_INTERVAL == 0
-    ):
-
-        try:
-            _last_ocr_detections = (
-                _run_ocr(frame)
-            )
-
-        except Exception:
-            logger.exception(
-                "Number-plate inference failed"
-            )
-
-    # --------------------------------------------------------
-    # Anomaly
-    # --------------------------------------------------------
-
-    if (
-        frame_number == 1
-        or frame_number % ANOMALY_INTERVAL == 0
-    ):
-
-        try:
-            (
-                _last_anomaly_detected,
-                _last_anomaly_error,
-            ) = _run_anomaly(frame)
-
-        except Exception:
-            logger.exception(
-                "Anomaly inference failed"
-            )
-
-    # --------------------------------------------------------
-    # Violence
-    # --------------------------------------------------------
-
-    violence_prediction = (
-        _last_violence_prediction
+    return _default_processor.process_frame(
+        frame,
+        source_label=source_label,
+        draw=draw,
     )
 
-    violence_confidence = (
-        _last_violence_confidence
-    )
 
-    if (
-        frame_number
-        % VIOLENCE_SAMPLE_INTERVAL
-        == 0
-    ):
-
-        try:
-            (
-                violence_prediction,
-                violence_confidence,
-            ) = _update_violence(frame)
-
-        except Exception:
-            logger.exception(
-                "Violence inference failed"
-            )
-
-    # --------------------------------------------------------
-    # Combined detections
-    # --------------------------------------------------------
-
-    detections = (
-        list(_last_weapon_detections)
-        + list(_last_ocr_detections)
-    )
-
-    if draw:
-
-        for detection in detections:
-            _draw_detection(
-                output_frame,
-                detection,
-            )
-
-        _draw_hud(
-            output_frame,
-            source_label=source_label,
-            detections=len(detections),
-            anomaly=_last_anomaly_detected,
-            anomaly_error=_last_anomaly_error,
-            violence=violence_prediction,
-            violence_confidence=violence_confidence,
-        )
-
-    elapsed_ms = (
-        time.perf_counter()
-        - start
-    ) * 1000.0
-
-    with _lock:
-
-        _stats["frames_processed"] += 1
-
-        _stats["last_inference_ms"] = round(
-            elapsed_ms,
-            2,
-        )
-
-        _stats["detections_last_frame"] = len(
-            detections
-        )
-
-        frames_processed = _stats[
-            "frames_processed"
-        ]
-
-    meta = {
-        "detections": detections,
-
-        "weapon_detections": list(
-            _last_weapon_detections
-        ),
-
-        "ocr_detections": list(
-            _last_ocr_detections
-        ),
-
-        "anomaly": {
-            "detected": _last_anomaly_detected,
-            "error": round(
-                _last_anomaly_error,
-                6,
-            ),
-            "threshold": ANOMALY_THRESHOLD,
-        },
-
-        "violence": {
-            "prediction": violence_prediction,
-            "confidence": round(
-                violence_confidence,
-                4,
-            ),
-            "frames_collected": len(
-                _violence_frames
-            ),
-            "required_frames": (
-                VIOLENCE_SEQUENCE_LENGTH
-            ),
-        },
-
-        "ocr": {
-            "plate_detection": (
-                _model_status["ocr"] == "loaded"
-            ),
-            "text_recognition": (
-                _model_status["ocr_recognition"] == "loaded"
-            ),
-            "reason": (
-                None
-                if _model_status["ocr_recognition"] == "loaded"
-                else _model_errors.get(
-                    "ocr_recognition",
-                    "not_loaded",
-                )
-            ),
-        },
-
-        "inference_ms": round(
-            elapsed_ms,
-            2,
-        ),
-
-        "frames_processed": frames_processed,
-
-        "model_status": model_status(),
-
-        "timestamp": datetime.now(
-            timezone.utc
-        ).isoformat(),
-
-        "source_label": source_label,
-    }
-
-    return output_frame, meta
+def get_stats() -> Dict[str, Any]:
+    return _default_processor.get_stats()

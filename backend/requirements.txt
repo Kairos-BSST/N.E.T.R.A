@@ -1,3 +1,8 @@
+# CPU-only PyTorch build (much smaller/faster than the default CUDA wheels).
+# pip checks this index in addition to PyPI, and picks the CPU build since
+# that's all it finds here for torch/torchvision.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 python-dotenv>=1.0.0
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
@@ -8,8 +13,16 @@ google-api-python-client>=2.126.0
 opencv-python-headless>=4.8.0
 numpy>=1.24.0
 
-# Optional: enables real YOLO inference in frame_processor when models/*.pt exist
-# ultralytics>=8.0.0
+# Required: all four detection models (weapon.pt, OCR.pt, anomaly.pth, violence.pth)
+# fail to load without these. frame_processor.py catches the ImportError silently,
+# so the app runs but every job returns 0 detections until these are installed.
+ultralytics>=8.0.0
+torch>=2.1.0
+torchvision>=0.16.0
+paddleocr>=2.7.0
+paddlepaddle>=2.5.0
+albumentations>=1.3.0
+reportlab>=4.0.0
 
 # Dev/test only
 pytest>=8.0.0

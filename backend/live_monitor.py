@@ -48,6 +48,14 @@ class LiveMonitor:
         self._latest_meta: Dict[str, Any] = {}
         self._source_label = "—"
 
+        # This session's own AI pipeline state (frame counter, last
+        # detections, violence buffer, scene-change baseline) -- created
+        # fresh on every connect() so a new live session never inherits
+        # stale state from whatever was connected before it, and so this
+        # doesn't collide with any file-upload job's FrameProcessor
+        # running concurrently. See frame_processor.FrameProcessor.
+        self._processor = frame_processor.FrameProcessor(label="live")
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -82,6 +90,9 @@ class LiveMonitor:
             self._processing_status = "preview"
             self._source_label = source.label
             self._resolution = self._read_resolution(source)
+
+            # Fresh AI pipeline state for this new session -- see __init__.
+            self._processor = frame_processor.FrameProcessor(label=source.label)
 
             analysis = analysis_pipeline.queue_for_analysis(
                 source=analysis_pipeline.SOURCE_LIVE,
@@ -168,7 +179,7 @@ class LiveMonitor:
 
     def status(self) -> Dict[str, Any]:
         with self._lock:
-            fp_stats = frame_processor.get_stats()
+            fp_stats = self._processor.get_stats()
             return {
                 "connected": self._connected,
                 "monitoring": self._monitoring,
@@ -182,7 +193,7 @@ class LiveMonitor:
                 "error": self._error,
                 "error_code": self._error_code,
                 "job_id": self._job_id,
-                "model_status": fp_stats.get("model_status"),
+                "model_status": frame_processor.model_status(),
                 "has_frame": self._latest_jpeg is not None,
                 "frame_version": self._frame_version,
                 "last_inference_ms": fp_stats.get("last_inference_ms"),
@@ -278,7 +289,7 @@ class LiveMonitor:
 
             try:
                 if ai_on:
-                    annotated, meta = frame_processor.process_frame(
+                    annotated, meta = self._processor.process_frame(
                         frame, source_label=label, draw=True
                     )
                 else:

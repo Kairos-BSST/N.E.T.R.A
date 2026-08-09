@@ -26,6 +26,7 @@ import cv2
 import numpy as np
 
 from config import Config
+from webhook_client import send_event_webhook
 
 logger = logging.getLogger("netra.analysis")
 
@@ -139,6 +140,10 @@ def add_event(job_id: str, event: Dict[str, Any]) -> None:
     Append one detection event to a job's live event log (used to build
     the searchable report / timeline). Kept separate from `result` so the
     frontend can poll and render events while analysis is still running.
+
+    Also fires an outbound webhook (if WEBHOOK_URLS is configured) the
+    instant the event is logged, so alerting doesn't have to wait for the
+    frontend's next poll of GET /analysis/jobs/{id}/report.
     """
     with _lock:
         job = _jobs.get(job_id)
@@ -146,6 +151,8 @@ def add_event(job_id: str, event: Dict[str, Any]) -> None:
             return
         events = job.setdefault("events", [])
         events.append(event)
+
+    send_event_webhook(job_id, event)
 # ============================================================
 # Job creation
 # ============================================================
@@ -310,6 +317,13 @@ def list_jobs(limit: int = 50) -> List[dict]:
 # ============================================================
 # Shared AI entry point
 # ============================================================
+#
+# NOTE: this module-level process_frame() (backed by frame_processor's
+# single shared default instance) is kept only for any external/legacy
+# caller. _file_analysis_worker below does NOT use it -- each job creates
+# its own frame_processor.FrameProcessor() instance so concurrent uploads
+# don't corrupt each other's frame counters/detections/violence buffers.
+# See frame_processor.py's FrameProcessor docstring for why that mattered.
 
 def process_frame(
     frame: np.ndarray,
@@ -318,11 +332,9 @@ def process_frame(
     draw: bool = True,
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
     """
-    Shared AI entry point.
-
-    All file-based analysis goes through this function.
-
-    Live monitoring uses the same underlying frame_processor module.
+    Shared AI entry point (single default stream). Prefer creating your
+    own frame_processor.FrameProcessor() instance for anything that may
+    run concurrently with other streams.
     """
 
     import frame_processor
@@ -399,9 +411,16 @@ def _file_analysis_worker(job_id: str) -> None:
     """
     Worker executed in a daemon thread.
 
-    Opens the video, feeds frames through the shared AI pipeline and
-    stores a compact summary in the analysis job.
+    Opens the video, feeds frames through a PER-JOB AI pipeline instance
+    and stores a compact summary in the analysis job.
+
+    Each job gets its own frame_processor.FrameProcessor() so that
+    multiple uploads analyzed at the same time (each already runs in its
+    own thread -- see start_file_analysis) don't share frame counters,
+    detection state, or the violence frame buffer with each other.
     """
+
+    import frame_processor
 
     job = get_job(job_id)
 
@@ -456,6 +475,9 @@ def _file_analysis_worker(job_id: str) -> None:
         "violence": False,
     }
 
+    # Per-job AI pipeline instance -- see docstring above.
+    processor = frame_processor.FrameProcessor(label=source_label)
+
     try:
 
         cap = cv2.VideoCapture(local_path)
@@ -509,7 +531,7 @@ def _file_analysis_worker(job_id: str) -> None:
             if not ok or frame is None:
                 break
 
-            _, meta = process_frame(
+            _, meta = processor.process_frame(
                 frame,
                 source_label=source_label,
                 draw=False,
