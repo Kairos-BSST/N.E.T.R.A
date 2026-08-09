@@ -12,7 +12,6 @@ inference entry point.
 
 This keeps all AI inference paths centralized.
 """
-
 from __future__ import annotations
 
 import logging
@@ -25,6 +24,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
+
+from config import Config
 
 logger = logging.getLogger("netra.analysis")
 
@@ -65,7 +66,86 @@ def _safe_job_copy(job: dict) -> dict:
     """
     return dict(job)
 
+def format_video_timestamp(seconds: float) -> str:
+    """
+    Convert a video-relative offset (seconds) into HH:MM:SS.mmm for
+    display in the report / timeline.
+    """
+    if seconds is None or seconds < 0:
+        seconds = 0.0
+    total_ms = int(round(seconds * 1000))
+    hours, rem_ms = divmod(total_ms, 3_600_000)
+    minutes, rem_ms = divmod(rem_ms, 60_000)
+    secs, ms = divmod(rem_ms, 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}.{ms:03d}"
 
+
+def _describe_location(
+    bbox: Optional[List[int]],
+    frame_w: int,
+    frame_h: int,
+    source_label: str,
+) -> str:
+    """
+    Human-readable location for a report row.
+
+    For detections with a bounding box (weapon / plate), this describes
+    WHERE in the frame it was seen (a 3x3 grid: top/middle/bottom x
+    left/center/right). For frame-level events (anomaly / violence, which
+    have no bounding box) it falls back to just the camera / source name,
+    since there is no specific region to point to.
+    """
+
+    if not bbox or frame_w <= 0 or frame_h <= 0:
+        return f"Camera: {source_label}"
+
+    x1, y1, x2, y2 = bbox
+    cx = (x1 + x2) / 2.0
+    cy = (y1 + y2) / 2.0
+
+    col = "left" if cx < frame_w / 3 else ("center" if cx < 2 * frame_w / 3 else "right")
+    row = "top" if cy < frame_h / 3 else ("middle" if cy < 2 * frame_h / 3 else "bottom")
+
+    return f"Camera: {source_label} — {row}-{col} of frame"
+
+
+def _snapshot_dir_for_job(job_id: str) -> str:
+    path = os.path.join(Config.SNAPSHOT_DIR, job_id)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _save_snapshot(job_id: str, event_id: str, frame: np.ndarray) -> Optional[str]:
+    """
+    Persist a JPEG evidence thumbnail for one detected event.
+    Returns a web-servable relative URL (mounted at /snapshots by api.py),
+    or None if the snapshot could not be written.
+    """
+    try:
+        out_dir = _snapshot_dir_for_job(job_id)
+        filename = f"{event_id}.jpg"
+        full_path = os.path.join(out_dir, filename)
+        ok = cv2.imwrite(full_path, frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+        if not ok:
+            return None
+        return f"/snapshots/{job_id}/{filename}"
+    except Exception:
+        logger.exception("Failed to save snapshot for job_id=%s event_id=%s", job_id, event_id)
+        return None
+
+
+def add_event(job_id: str, event: Dict[str, Any]) -> None:
+    """
+    Append one detection event to a job's live event log (used to build
+    the searchable report / timeline). Kept separate from `result` so the
+    frontend can poll and render events while analysis is still running.
+    """
+    with _lock:
+        job = _jobs.get(job_id)
+        if job is None:
+            return
+        events = job.setdefault("events", [])
+        events.append(event)
 # ============================================================
 # Job creation
 # ============================================================
@@ -78,6 +158,55 @@ def queue_for_analysis(
     original_name: Optional[str] = None,
     extra: Optional[Dict[str, Any]] = None,
 ) -> dict:
+    """
+    Register a source for analysis.
+
+    This function only creates the job.
+
+    For file-based sources, call start_file_analysis(job_id) after the
+    file has been successfully saved/downloaded.
+
+    Live sources are processed by live_monitor.py.
+    """
+
+    job_id = str(uuid.uuid4())
+
+    job = {
+        "job_id": job_id,
+        "source": source,
+        "local_path": local_path,
+        "stream_url": stream_url,
+        "original_name": original_name,
+        "status": "queued",
+        "message": "Accepted for analysis.",
+        "queued_at": _utc_now(),
+        "started_at": None,
+        "completed_at": None,
+        "updated_at": None,
+        "progress": 0.0,
+        "frames_processed": 0,
+        "total_frames": None,
+        "result": None,
+        "error": None,
+        "extra": extra or {},
+        # Chronological, timestamped detection log — the raw material for
+        # the searchable report / evidence review screen.
+        "events": [],
+    }
+
+    with _lock:
+        _jobs[job_id] = job
+
+    logger.info(
+        "Analysis queued job_id=%s source=%s path=%s stream=%s",
+        job_id,
+        source,
+        local_path,
+        stream_url,
+    )
+
+    return _safe_job_copy(job)
+    # ... rest of the function (registering job in _jobs, etc.) unchanged
     """
     Register a source for analysis.
 
@@ -315,6 +444,18 @@ def _file_analysis_worker(job_id: str) -> None:
 
     last_meta: Dict[str, Any] = {}
 
+    # Whether each event type is CURRENTLY being detected. An event is
+    # only logged on the False -> True transition (i.e. when something
+    # NEW starts happening), not on every frame it continues to be true.
+    # This keeps the report to one row per real occurrence instead of
+    # one row every couple of seconds.
+    active_state: Dict[str, bool] = {
+        "weapon": False,
+        "plate": False,
+        "anomaly": False,
+        "violence": False,
+    }
+
     try:
 
         cap = cv2.VideoCapture(local_path)
@@ -458,7 +599,85 @@ def _file_analysis_worker(job_id: str) -> None:
                 max_violence_confidence,
                 confidence,
             )
+# ------------------------------------------------
+            # Timestamped event log (report / timeline / evidence)
+            # ------------------------------------------------
 
+            video_time = (
+                (frames_processed - 1) / fps
+                if fps > 0
+                else float(frames_processed - 1)
+            )
+
+            def _log_event(event_type, label, confidence_val, extra_fields=None):
+                event_id = uuid.uuid4().hex[:12]
+                snapshot_url = _save_snapshot(job_id, event_id, frame)
+                event = {
+                    "event_id": event_id,
+                    "type": event_type,
+                    "label": label,
+                    "confidence": round(float(confidence_val), 4),
+                    "frame_number": frames_processed,
+                    "video_time_seconds": round(video_time, 3),
+                    "video_timestamp": format_video_timestamp(video_time),
+                    "wall_clock_time": _utc_now(),
+                    "snapshot_url": snapshot_url,
+                }
+                if extra_fields:
+                    event.update(extra_fields)
+                add_event(job_id, event)
+
+            frame_h, frame_w = frame.shape[:2]
+
+            weapon_dets = meta.get("weapon_detections", [])
+            weapon_now = bool(weapon_dets)
+            if weapon_now and not active_state["weapon"]:
+                top = max(weapon_dets, key=lambda d: d.get("confidence", 0.0))
+                bbox = top.get("bbox")
+                _log_event(
+                    "weapon", top.get("label", "weapon"), top.get("confidence", 0.0),
+                    {
+                        "detections_in_frame": len(weapon_dets),
+                        "bbox": bbox,
+                        "location": _describe_location(bbox, frame_w, frame_h, source_label),
+                    },
+                )
+            active_state["weapon"] = weapon_now
+
+            ocr_dets = meta.get("ocr_detections", [])
+            plate_now = bool(ocr_dets)
+            if plate_now and not active_state["plate"]:
+                top = max(ocr_dets, key=lambda d: d.get("confidence", 0.0))
+                bbox = top.get("bbox")
+                _log_event(
+                    "plate", top.get("text") or top.get("label", "number plate"),
+                    top.get("confidence", 0.0),
+                    {
+                        "detections_in_frame": len(ocr_dets),
+                        "bbox": bbox,
+                        "location": _describe_location(bbox, frame_w, frame_h, source_label),
+                    },
+                )
+            active_state["plate"] = plate_now
+
+            anomaly_now = bool(anomaly.get("detected"))
+            if anomaly_now and not active_state["anomaly"]:
+                _log_event(
+                    "anomaly", "Anomalous activity", 0.0,
+                    {
+                        "reconstruction_error": round(anomaly_error, 6),
+                        "location": _describe_location(None, frame_w, frame_h, source_label),
+                    },
+                )
+            active_state["anomaly"] = anomaly_now
+
+            violence_now = prediction == "FIGHT"
+            if violence_now and not active_state["violence"]:
+                _log_event(
+                    "violence", "Fight / violent activity", confidence,
+                    {"location": _describe_location(None, frame_w, frame_h, source_label)},
+                )
+            active_state["violence"] = violence_now
             # ------------------------------------------------
             # Progress update
             # ------------------------------------------------
@@ -584,7 +803,6 @@ def _file_analysis_worker(job_id: str) -> None:
                 job_id,
                 None,
             )
-
 
 # ============================================================
 # Worker information

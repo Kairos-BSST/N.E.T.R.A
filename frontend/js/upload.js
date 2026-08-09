@@ -56,6 +56,10 @@ window.NetraUpload = {
       metaSize.textContent = formatSize(file.size);
       metaUploadStatus.textContent = 'Uploading…';
 
+      // Play the file locally in the shared preview player right away —
+      // no need to wait for the backend, the browser already has the bytes.
+      window.NetraAnalysis.showVideoPreview(file);
+
       fileRow.innerHTML = `
         <div class="file-row">
           <div class="file-name">${file.name}</div>
@@ -89,7 +93,7 @@ window.NetraUpload = {
           fstatus.textContent = 'UPLOADED · QUEUED FOR ANALYSIS';
           metaUploadStatus.textContent = 'Uploaded';
           metaSize.textContent = formatSize(data.size_bytes || file.size);
-          window.NetraAnalysis.setState(data.analysis);
+          window.NetraAnalysis.startPolling(data.analysis);
           return;
         }
 

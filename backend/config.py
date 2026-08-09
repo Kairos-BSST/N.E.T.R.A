@@ -14,7 +14,13 @@ load_dotenv()
 
 
 class Config:
-    GOOGLE_OAUTH_CLIENT_SECRETS_FILE: str = os.getenv("GOOGLE_OAUTH_CLIENT_SECRETS_FILE", "")
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))       # .../N.E.T.R.A/backend
+    PROJECT_ROOT = os.path.dirname(BASE_DIR)                     # .../N.E.T.R.A
+
+    GOOGLE_OAUTH_CLIENT_SECRETS_FILE: str = os.getenv(
+    "GOOGLE_OAUTH_CLIENT_SECRETS_FILE",
+    os.path.join(PROJECT_ROOT, "cloud_integration", "google_oauth_client_secret.json")
+)
     GOOGLE_OAUTH_REDIRECT_URI: str = os.getenv(
         "GOOGLE_OAUTH_REDIRECT_URI", "http://localhost:8000/auth/google/callback"
     )
@@ -24,6 +30,15 @@ class Config:
     LOCAL_DRIVE_DOWNLOAD_DIR: str = os.getenv("LOCAL_DRIVE_DOWNLOAD_DIR", "./downloaded_videos/drive")
     LOCAL_UPLOAD_DIR: str = os.getenv("LOCAL_UPLOAD_DIR", "./downloaded_videos/uploads")
     STATE_FILE_PATH: str = os.getenv("STATE_FILE_PATH", "./fetch_state.json")
+
+    # Where per-event evidence thumbnails (snapshots) are written. Served
+    # back to the frontend/report via the /snapshots static mount.
+    SNAPSHOT_DIR: str = os.getenv("SNAPSHOT_DIR", "./analysis_snapshots")
+
+    # Minimum gap (seconds of video time) between two logged events of the
+    # SAME type on the SAME job. Prevents one long detection from spamming
+    # a new report row on every processed frame.
+    EVENT_DEDUP_SECONDS: float = float(os.getenv("EVENT_DEDUP_SECONDS", "2.0"))
 
     # Max upload size in bytes (default 2 GB). Override with MAX_UPLOAD_BYTES.
     MAX_UPLOAD_BYTES: int = int(os.getenv("MAX_UPLOAD_BYTES", str(2 * 1024 * 1024 * 1024)))
@@ -39,6 +54,7 @@ class Config:
     def ensure_storage_dirs(cls) -> None:
         os.makedirs(cls.LOCAL_DRIVE_DOWNLOAD_DIR, exist_ok=True)
         os.makedirs(cls.LOCAL_UPLOAD_DIR, exist_ok=True)
+        os.makedirs(cls.SNAPSHOT_DIR, exist_ok=True)
 
     @classmethod
     def validate_drive(cls) -> None:

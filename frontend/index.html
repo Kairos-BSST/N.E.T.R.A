@@ -201,8 +201,14 @@
       </div>
     </div>
 
-    <div class="analysis-panel" id="analysisPanel">
+   <div class="analysis-panel" id="analysisPanel">
       <div class="panel-label">MODEL ANALYSIS</div>
+
+      <div class="video-preview-block" id="videoPreviewBlock" style="display:none;">
+        <video id="analysisVideoPreview" controls playsinline></video>
+        <div class="video-preview-hint">Click any event below to jump the player to that moment.</div>
+      </div>
+
       <div class="analysis-status">
         <div class="analysis-pill" id="analysisPill">
           <span class="dot"></span>
@@ -212,6 +218,13 @@
           Every source (live CCTV, local upload, Drive) feeds the shared VideoSource → frame_processor path. Connect a live feed and start monitoring to see annotated frames here.
         </p>
         <div class="analysis-meta" id="analysisMeta">job — · source —</div>
+      </div>
+
+      <div class="report-block">
+        <div class="panel-label">EVENT REPORT / TIMELINE</div>
+        <div class="report-summary" id="reportSummary"></div>
+        <p class="report-empty" id="reportEmpty">No events logged yet — detections with a video timestamp and evidence frame will appear here as the video is analysed.</p>
+        <div class="report-timeline" id="reportTimeline"></div>
       </div>
     </div>
 

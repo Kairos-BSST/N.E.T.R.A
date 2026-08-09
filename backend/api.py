@@ -56,7 +56,10 @@ if os.path.isdir(FRONTEND_DIR):
         app.mount("/css", StaticFiles(directory=css_dir), name="css")
     if os.path.isdir(js_dir):
         app.mount("/js", StaticFiles(directory=js_dir), name="js")
-
+# Evidence thumbnails written by analysis_pipeline for each detected event
+# (weapon / plate / anomaly / violence). Referenced by event["snapshot_url"].
+os.makedirs(Config.SNAPSHOT_DIR, exist_ok=True)
+app.mount("/snapshots", StaticFiles(directory=Config.SNAPSHOT_DIR), name="snapshots")
 
 @app.get("/")
 def serve_frontend():
