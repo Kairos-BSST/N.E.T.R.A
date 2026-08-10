@@ -53,6 +53,11 @@ def get_analysis_report(job_id: str):
         "completed_at": job.get("completed_at"),
         "video_info": job.get("video_info"),
         "summary": job.get("result"),
+        "annotated_video_url": (
+            (job.get("result") or {}).get("annotated_video_url")
+            or job.get("annotated_video_url")
+        ),
+        "plates_found": (job.get("result") or {}).get("plates_found") or [],
         "event_count": len(events),
         "events": sorted(events, key=lambda e: e.get("video_time_seconds", 0)),
     }

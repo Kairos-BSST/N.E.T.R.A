@@ -116,23 +116,42 @@ def _snapshot_dir_for_job(job_id: str) -> str:
     return path
 
 
-def _save_snapshot(job_id: str, event_id: str, frame: np.ndarray) -> Optional[str]:
+def _save_snapshot(
+    job_id: str,
+    event_id: str,
+    frame: np.ndarray,
+    detections: Optional[List[Dict[str, Any]]] = None,
+) -> Optional[str]:
     """
     Persist a JPEG evidence thumbnail for one detected event.
+    Draws bounding boxes when detections are provided so the report
+    shows WHERE the plate/weapon was, not just a bare frame.
     Returns a web-servable relative URL (mounted at /snapshots by api.py),
     or None if the snapshot could not be written.
     """
     try:
+        import frame_processor
+
+        out_frame = frame
+        if detections:
+            out_frame = frame_processor.draw_detections_on_frame(
+                frame, detections
+            )
+
         out_dir = _snapshot_dir_for_job(job_id)
         filename = f"{event_id}.jpg"
         full_path = os.path.join(out_dir, filename)
-        ok = cv2.imwrite(full_path, frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+        ok = cv2.imwrite(full_path, out_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
         if not ok:
             return None
         return f"/snapshots/{job_id}/{filename}"
     except Exception:
         logger.exception("Failed to save snapshot for job_id=%s event_id=%s", job_id, event_id)
         return None
+
+
+def _annotated_video_path(job_id: str) -> str:
+    return os.path.join(_snapshot_dir_for_job(job_id), "annotated.mp4")
 
 
 def add_event(job_id: str, event: Dict[str, Any]) -> None:
@@ -462,6 +481,8 @@ def _file_analysis_worker(job_id: str) -> None:
     max_violence_confidence = 0.0
 
     last_meta: Dict[str, Any] = {}
+    plates_seen: Dict[str, Dict[str, Any]] = {}
+    last_plate_key: Optional[str] = None
 
     # Whether each event type is CURRENTLY being detected. An event is
     # only logged on the False -> True transition (i.e. when something
@@ -477,6 +498,9 @@ def _file_analysis_worker(job_id: str) -> None:
 
     # Per-job AI pipeline instance -- see docstring above.
     processor = frame_processor.FrameProcessor(label=source_label)
+
+    writer: Optional[cv2.VideoWriter] = None
+    annotated_rel_url: Optional[str] = None
 
     try:
 
@@ -509,6 +533,22 @@ def _file_analysis_worker(job_id: str) -> None:
             cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0
         )
 
+        out_path = _annotated_video_path(job_id)
+        write_fps = fps if fps > 1e-3 else 20.0
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        if width > 0 and height > 0:
+            writer = cv2.VideoWriter(
+                out_path, fourcc, write_fps, (width, height)
+            )
+            if writer.isOpened():
+                annotated_rel_url = f"/snapshots/{job_id}/annotated.mp4"
+            else:
+                writer = None
+                logger.warning(
+                    "Could not open annotated VideoWriter for job_id=%s",
+                    job_id,
+                )
+
         update_job(
             job_id,
             status="processing",
@@ -522,6 +562,7 @@ def _file_analysis_worker(job_id: str) -> None:
                 "height": height,
                 "total_frames": total_frames,
             },
+            annotated_video_url=annotated_rel_url,
         )
 
         while True:
@@ -531,11 +572,14 @@ def _file_analysis_worker(job_id: str) -> None:
             if not ok or frame is None:
                 break
 
-            _, meta = processor.process_frame(
+            annotated, meta = processor.process_frame(
                 frame,
                 source_label=source_label,
-                draw=False,
+                draw=True,
             )
+
+            if writer is not None:
+                writer.write(annotated)
 
             frames_processed += 1
             last_meta = meta
@@ -631,9 +675,11 @@ def _file_analysis_worker(job_id: str) -> None:
                 else float(frames_processed - 1)
             )
 
-            def _log_event(event_type, label, confidence_val, extra_fields=None):
+            def _log_event(event_type, label, confidence_val, extra_fields=None, snap_dets=None):
                 event_id = uuid.uuid4().hex[:12]
-                snapshot_url = _save_snapshot(job_id, event_id, frame)
+                snapshot_url = _save_snapshot(
+                    job_id, event_id, frame, detections=snap_dets
+                )
                 event = {
                     "event_id": event_id,
                     "type": event_type,
@@ -663,23 +709,56 @@ def _file_analysis_worker(job_id: str) -> None:
                         "bbox": bbox,
                         "location": _describe_location(bbox, frame_w, frame_h, source_label),
                     },
+                    snap_dets=weapon_dets,
                 )
             active_state["weapon"] = weapon_now
 
             ocr_dets = meta.get("ocr_detections", [])
             plate_now = bool(ocr_dets)
-            if plate_now and not active_state["plate"]:
+            if plate_now:
                 top = max(ocr_dets, key=lambda d: d.get("confidence", 0.0))
-                bbox = top.get("bbox")
-                _log_event(
-                    "plate", top.get("text") or top.get("label", "number plate"),
-                    top.get("confidence", 0.0),
-                    {
-                        "detections_in_frame": len(ocr_dets),
-                        "bbox": bbox,
-                        "location": _describe_location(bbox, frame_w, frame_h, source_label),
-                    },
+                plate_text = (
+                    top.get("plate_number")
+                    or top.get("text")
+                    or top.get("label")
+                    or "PLATE"
                 )
+                plate_key = str(plate_text).strip().upper()
+                should_log_plate = (
+                    (not active_state["plate"])
+                    or (plate_key != last_plate_key)
+                )
+                if should_log_plate:
+                    bbox = top.get("bbox")
+                    _log_event(
+                        "plate",
+                        plate_text,
+                        top.get("confidence", 0.0),
+                        {
+                            "detections_in_frame": len(ocr_dets),
+                            "bbox": bbox,
+                            "plate_number": top.get("plate_number"),
+                            "ocr_confidence": top.get("ocr_confidence"),
+                            "location": _describe_location(
+                                bbox, frame_w, frame_h, source_label
+                            ),
+                        },
+                        snap_dets=ocr_dets,
+                    )
+                    if top.get("plate_number"):
+                        plates_seen[plate_key] = {
+                            "plate_number": top.get("plate_number"),
+                            "confidence": round(
+                                float(top.get("confidence", 0.0)), 4
+                            ),
+                            "ocr_confidence": top.get("ocr_confidence"),
+                            "bbox": top.get("bbox"),
+                            "frame_number": frames_processed,
+                            "video_time_seconds": round(video_time, 3),
+                        }
+                    last_plate_key = plate_key
+            else:
+                last_plate_key = None
             active_state["plate"] = plate_now
 
             anomaly_now = bool(anomaly.get("detected"))
@@ -688,6 +767,7 @@ def _file_analysis_worker(job_id: str) -> None:
                     "anomaly", "Anomalous activity", 0.0,
                     {
                         "reconstruction_error": round(anomaly_error, 6),
+                        "threshold": anomaly.get("threshold"),
                         "location": _describe_location(None, frame_w, frame_h, source_label),
                     },
                 )
@@ -751,6 +831,7 @@ def _file_analysis_worker(job_id: str) -> None:
                 "Video opened but no frames could be read."
             )
 
+        ocr_meta = (last_meta or {}).get("ocr") or {}
         result = {
             "frames_processed": frames_processed,
             "total_detections": total_detections,
@@ -773,7 +854,11 @@ def _file_analysis_worker(job_id: str) -> None:
             "model_status": last_meta.get(
                 "model_status"
             ),
-            "ocr_text_recognition": False,
+            "ocr_text_recognition": bool(
+                ocr_meta.get("text_recognition")
+            ),
+            "plates_found": list(plates_seen.values()),
+            "annotated_video_url": annotated_rel_url,
         }
 
         update_job(
@@ -784,14 +869,16 @@ def _file_analysis_worker(job_id: str) -> None:
             frames_processed=frames_processed,
             completed_at=_utc_now(),
             result=result,
+            annotated_video_url=annotated_rel_url,
             error=None,
         )
 
         logger.info(
-            "Analysis completed job_id=%s frames=%s seconds=%.2f",
+            "Analysis completed job_id=%s frames=%s seconds=%.2f plates=%s",
             job_id,
             frames_processed,
             elapsed_seconds,
+            len(plates_seen),
         )
 
     except Exception as exc:
@@ -811,6 +898,14 @@ def _file_analysis_worker(job_id: str) -> None:
         )
 
     finally:
+
+        if writer is not None:
+            try:
+                writer.release()
+            except Exception:
+                logger.exception(
+                    "Failed to release annotated video writer"
+                )
 
         if cap is not None:
             try:

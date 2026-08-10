@@ -205,8 +205,12 @@
       <div class="panel-label">MODEL ANALYSIS</div>
 
       <div class="video-preview-block" id="videoPreviewBlock" style="display:none;">
-        <video id="analysisVideoPreview" controls playsinline></video>
-        <div class="video-preview-hint">Click any event below to jump the player to that moment.</div>
+        <div class="video-preview-stage" id="videoPreviewStage">
+          <video id="analysisVideoPreview" controls playsinline></video>
+          <canvas id="analysisOverlay" class="video-overlay" aria-hidden="true"></canvas>
+        </div>
+        <div class="video-preview-hint">Click any event below to jump the player to that moment — detection boxes appear on the frame.</div>
+        <a id="annotatedVideoLink" class="annotated-video-link" href="#" target="_blank" rel="noopener" style="display:none;">Open annotated video (boxes drawn)</a>
       </div>
 
       <div class="analysis-status">

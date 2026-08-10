@@ -4,6 +4,9 @@ window.NetraAnalysis = {
   _pollTimer: null,
   _seenEventIds: new Set(),
   _previewObjectUrl: null,
+  _events: [],
+  _videoInfo: null,
+  _activeOverlayEvent: null,
 
   /* ---- video preview ---- */
 
@@ -20,13 +23,96 @@ window.NetraAnalysis = {
     this._previewObjectUrl = URL.createObjectURL(file);
     video.src = this._previewObjectUrl;
     block.style.display = 'block';
+    this._bindOverlay(video);
+    this.clearOverlay();
   },
 
-  seekVideoTo(seconds) {
+  _bindOverlay(video) {
+    if (video._netraOverlayBound) return;
+    video._netraOverlayBound = true;
+    const redraw = () => this.drawOverlay(this._activeOverlayEvent);
+    video.addEventListener('loadedmetadata', redraw);
+    video.addEventListener('seeked', redraw);
+    video.addEventListener('timeupdate', () => {
+      // Keep box visible near the event timestamp; clear if user scrubbed away.
+      const ev = this._activeOverlayEvent;
+      if (!ev || ev.video_time_seconds == null) return;
+      if (Math.abs(video.currentTime - ev.video_time_seconds) > 1.25) {
+        this.clearOverlay();
+      }
+    });
+    window.addEventListener('resize', redraw);
+  },
+
+  seekVideoTo(seconds, event) {
     const video = document.getElementById('analysisVideoPreview');
     if (!video || !video.src) return;
+    this._activeOverlayEvent = event || null;
     video.currentTime = Math.max(0, seconds);
-    video.play().catch(() => {}); // ignore autoplay-block errors
+    video.play().catch(() => {});
+    this.drawOverlay(this._activeOverlayEvent);
+  },
+
+  clearOverlay() {
+    this._activeOverlayEvent = null;
+    const canvas = document.getElementById('analysisOverlay');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+  },
+
+  drawOverlay(event) {
+    const video = document.getElementById('analysisVideoPreview');
+    const canvas = document.getElementById('analysisOverlay');
+    if (!video || !canvas) return;
+
+    const rect = video.getBoundingClientRect();
+    const cssW = Math.max(1, rect.width);
+    const cssH = Math.max(1, rect.height);
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    canvas.style.width = `${cssW}px`;
+    canvas.style.height = `${cssH}px`;
+
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    if (!event || !Array.isArray(event.bbox) || event.bbox.length !== 4) return;
+
+    const srcW = (this._videoInfo && this._videoInfo.width) || video.videoWidth || 1;
+    const srcH = (this._videoInfo && this._videoInfo.height) || video.videoHeight || 1;
+    if (!srcW || !srcH) return;
+
+    // object-fit: contain style letterboxing
+    const scale = Math.min(cssW / srcW, cssH / srcH);
+    const drawW = srcW * scale;
+    const drawH = srcH * scale;
+    const ox = (cssW - drawW) / 2;
+    const oy = (cssH - drawH) / 2;
+
+    const [x1, y1, x2, y2] = event.bbox;
+    const left = ox + x1 * scale;
+    const top = oy + y1 * scale;
+    const width = (x2 - x1) * scale;
+    const height = (y2 - y1) * scale;
+
+    const color = (this.EVENT_LABELS[event.type] || {}).color || '#2E6B9B';
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.5;
+    ctx.strokeRect(left, top, width, height);
+
+    const label = event.plate_number || event.label || event.type || 'DET';
+    ctx.font = '600 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+    const padX = 6;
+    const textW = ctx.measureText(label).width;
+    const tagH = 20;
+    const tagY = Math.max(0, top - tagH - 2);
+    ctx.fillStyle = color;
+    ctx.fillRect(left, tagY, textW + padX * 2, tagH);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(label, left + padX, tagY + 14);
   },
 
   setState(job, opts = {}) {
@@ -78,12 +164,19 @@ window.NetraAnalysis = {
 
   resetTimeline() {
     this._seenEventIds = new Set();
+    this._events = [];
+    this._activeOverlayEvent = null;
+    this.clearOverlay();
     const list = document.getElementById('reportTimeline');
     if (list) list.innerHTML = '';
     const empty = document.getElementById('reportEmpty');
     if (empty) empty.style.display = 'block';
     const btn = document.getElementById('downloadReportBtn');
     if (btn) btn.style.display = 'none';
+    const link = document.getElementById('annotatedVideoLink');
+    if (link) link.style.display = 'none';
+    const plates = document.getElementById('platesFound');
+    if (plates) plates.remove();
   },
 
   renderEvents(events) {
@@ -97,8 +190,10 @@ window.NetraAnalysis = {
     events.forEach((ev) => {
       if (this._seenEventIds.has(ev.event_id)) return;
       this._seenEventIds.add(ev.event_id);
+      this._events.push(ev);
 
       const meta = this.EVENT_LABELS[ev.type] || { title: (ev.type || 'EVENT').toUpperCase(), color: '#666' };
+      const plateBit = ev.plate_number ? ` · ${ev.plate_number}` : '';
 
       const row = document.createElement('div');
       row.className = 'report-row';
@@ -114,10 +209,10 @@ window.NetraAnalysis = {
             <span class="report-tag" style="color:${meta.color};border-color:${meta.color};">${meta.title}</span>
             <span class="report-timestamp">${ev.video_timestamp}</span>
           </div>
-          <div class="report-label">${ev.label || ''}${ev.confidence ? ` · ${(ev.confidence * 100).toFixed(1)}%` : ''}</div>
-          <div class="report-frame">frame #${ev.frame_number}${ev.location ? ` · ${ev.location}` : ''}</div>
+          <div class="report-label">${ev.label || ''}${plateBit}${ev.confidence ? ` · ${(ev.confidence * 100).toFixed(1)}%` : ''}</div>
+          <div class="report-frame">frame #${ev.frame_number}${ev.location ? ` · ${ev.location}` : ''}${ev.bbox ? ' · boxed' : ''}</div>
         </div>`;
-      const jump = () => this.seekVideoTo(ev.video_time_seconds);
+      const jump = () => this.seekVideoTo(ev.video_time_seconds, ev);
       row.addEventListener('click', jump);
       row.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); jump(); }
@@ -148,6 +243,7 @@ window.NetraAnalysis = {
       try {
         const report = await this.fetchReport(jobId);
         this.setState(report);
+        this._videoInfo = report.video_info || null;
         this.renderEvents(report.events);
 
         const status = (report.status || '').toLowerCase();
@@ -174,7 +270,31 @@ window.NetraAnalysis = {
         + `${report.event_count || 0} events logged `
         + `(weapon: ${s.weapon_detections ?? 0}, plate: ${s.plate_detections ?? 0}, `
         + `anomaly frames: ${s.anomaly_frames ?? 0}, fight frames: ${s.fight_frames ?? 0}).`;
+
+      const plates = report.plates_found || s.plates_found || [];
+      let platesEl = document.getElementById('platesFound');
+      if (plates.length) {
+        if (!platesEl) {
+          platesEl = document.createElement('div');
+          platesEl.id = 'platesFound';
+          platesEl.className = 'plates-found';
+          summaryEl.insertAdjacentElement('afterend', platesEl);
+        }
+        const nums = plates.map((p) => p.plate_number).filter(Boolean);
+        platesEl.innerHTML = `<strong>Plates read:</strong> ${nums.join(', ')}`;
+      } else if (platesEl) {
+        platesEl.remove();
+      }
     }
+
+    const link = document.getElementById('annotatedVideoLink');
+    const annotatedUrl = report.annotated_video_url
+      || (report.summary && report.summary.annotated_video_url);
+    if (link && annotatedUrl) {
+      link.href = annotatedUrl;
+      link.style.display = 'inline-block';
+    }
+
     this.showDownloadButton(report.job_id);
   },
 
