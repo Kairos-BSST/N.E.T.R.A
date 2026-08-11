@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "public_base_url": "http://127.0.0.1:8000",
+  "webhooks": [],
+  "watchlists": [
+    {
+      "id": "f7e76cf3adcf",
+      "name": "Priority plates",
+      "type": "plate",
+      "enabled": true,
+      "values": [],
+      "notes": "Add plate numbers (A-Z0-9). Matching plate events always alert."
+    }
+  ],
+  "rules": [
+    {
+      "id": "1068155128ba",
+      "name": "Weapon detected",
+      "enabled": true,
+      "event_types": [
+        "weapon"
+      ],
+      "min_confidence": 0.65,
+      "watchlist_id": null,
+      "severity_ids": [],
+      "severity_labels": [],
+      "cooldown_seconds": 5.0,
+      "severity": "critical",
+      "include_clip": true
+    },
+    {
+      "id": "2722e9c4c3f4",
+      "name": "Violence / fight",
+      "enabled": true,
+      "event_types": [
+        "violence"
+      ],
+      "min_confidence": 0.9,
+      "watchlist_id": null,
+      "cooldown_seconds": 5.0,
+      "severity": "critical",
+      "include_clip": true
+    },
+    {
+      "id": "ac457502b2b0",
+      "name": "Anomaly",
+      "enabled": true,
+      "event_types": [
+        "anomaly"
+      ],
+      "min_confidence": 0.0,
+      "watchlist_id": null,
+      "cooldown_seconds": 8.0,
+      "severity": "high",
+      "include_clip": false
+    },
+    {
+      "id": "e2cb2d10481b",
+      "name": "Watchlist plate match",
+      "enabled": false,
+      "event_types": [
+        "plate"
+      ],
+      "min_confidence": 0.3,
+      "watchlist_id": "any_plate",
+      "cooldown_seconds": 5.0,
+      "severity": "high",
+      "include_clip": true
+    }
+  ]
+}

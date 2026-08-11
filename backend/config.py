@@ -35,6 +35,10 @@ class Config:
     # back to the frontend/report via the /snapshots static mount.
     SNAPSHOT_DIR: str = os.getenv("SNAPSHOT_DIR", "./analysis_snapshots")
 
+    # Absolute base URL embedded in webhook alert payloads so operators
+    # can open snapshot/clip links from Slack/Teams/etc.
+    PUBLIC_BASE_URL: str = os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:8000")
+
     # Minimum gap (seconds of video time) between two logged events of the
     # SAME type on the SAME job. Prevents one long detection from spamming
     # a new report row on every processed frame.

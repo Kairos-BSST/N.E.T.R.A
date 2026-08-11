@@ -28,6 +28,9 @@ import numpy as np
 from config import Config
 from webhook_client import send_event_webhook
 
+# alerting is imported lazily inside add_event to avoid circular imports
+# during module load; see emit path below.
+
 logger = logging.getLogger("netra.analysis")
 
 
@@ -160,18 +163,24 @@ def add_event(job_id: str, event: Dict[str, Any]) -> None:
     the searchable report / timeline). Kept separate from `result` so the
     frontend can poll and render events while analysis is still running.
 
-    Also fires an outbound webhook (if WEBHOOK_URLS is configured) the
-    instant the event is logged, so alerting doesn't have to wait for the
-    frontend's next poll of GET /analysis/jobs/{id}/report.
+    Immediately hands the event to the Sub-5s alerting pipeline
+    (rules / watchlists / webhook routing with snapshot+clip context).
     """
+    job_copy = None
     with _lock:
         job = _jobs.get(job_id)
         if job is None:
             return
         events = job.setdefault("events", [])
         events.append(event)
+        job_copy = dict(job)
 
-    send_event_webhook(job_id, event)
+    try:
+        import alerting
+        alerting.emit_from_event(job_id, event, job=job_copy)
+    except Exception:
+        logger.exception("Alert pipeline failed for job_id=%s — falling back to legacy webhook", job_id)
+        send_event_webhook(job_id, event)
 # ============================================================
 # Job creation
 # ============================================================

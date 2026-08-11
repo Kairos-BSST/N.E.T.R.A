@@ -25,6 +25,7 @@ from fastapi.staticfiles import StaticFiles
 
 from config import Config
 from inputs import analysis as analysis_input
+from inputs import alerts as alerts_input
 from inputs import drive as drive_input
 from inputs import live as live_input
 from inputs import upload as upload_input
@@ -37,8 +38,8 @@ FRONTEND_DIR = os.path.abspath(os.path.join(BACKEND_DIR, "..", "frontend"))
 
 app = FastAPI(
     title="N.E.T.R.A Signal Intake API",
-    description="Backend for Signal Intake — live CCTV/webcam, upload, Drive, shared AI frame pipeline.",
-    version="1.3.0",
+    description="Backend for Signal Intake — live CCTV/webcam, upload, Drive, shared AI frame pipeline, Sub-5s webhook alerting.",
+    version="1.4.0",
 )
 
 Config.ensure_storage_dirs()
@@ -47,6 +48,7 @@ app.include_router(live_input.router)
 app.include_router(upload_input.router)
 app.include_router(drive_input.router)
 app.include_router(analysis_input.router)
+app.include_router(alerts_input.router)
 
 # Static assets from ../frontend (css/, js/)
 if os.path.isdir(FRONTEND_DIR):

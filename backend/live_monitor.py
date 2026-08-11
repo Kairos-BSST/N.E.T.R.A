@@ -56,6 +56,18 @@ class LiveMonitor:
         # running concurrently. See frame_processor.FrameProcessor.
         self._processor = frame_processor.FrameProcessor(label="live")
 
+        # Edge-trigger flags so live detections emit one alert per
+        # appearance (same semantics as file analysis), then ride the
+        # Sub-5s webhook pipeline with snapshot context.
+        self._active_state = {
+            "weapon": False,
+            "plate": False,
+            "anomaly": False,
+            "violence": False,
+        }
+        self._last_plate_key: Optional[str] = None
+        self._loop_started_monotonic = 0.0
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -251,10 +263,133 @@ class LiveMonitor:
                 self._frame_version += 1
             self._frame_event.set()
 
+    def _emit_live_events(self, frame, meta: Dict[str, Any], label: str) -> None:
+        """Translate live frame meta into analysis events → alerting."""
+        job_id = self._job_id
+        if not job_id or not meta:
+            return
+
+        import uuid
+        from datetime import datetime, timezone
+
+        frame_h, frame_w = frame.shape[:2]
+        video_time = max(0.0, time.perf_counter() - (self._loop_started_monotonic or time.perf_counter()))
+
+        def _log(event_type, label_text, confidence, extra=None, snap_dets=None):
+            event_id = uuid.uuid4().hex[:12]
+            snapshot_url = analysis_pipeline._save_snapshot(
+                job_id, event_id, frame, detections=snap_dets
+            )
+            event = {
+                "event_id": event_id,
+                "type": event_type,
+                "label": label_text,
+                "confidence": round(float(confidence or 0.0), 4),
+                "frame_number": self._frame_count,
+                "video_time_seconds": round(video_time, 3),
+                "video_timestamp": analysis_pipeline.format_video_timestamp(video_time),
+                "wall_clock_time": datetime.now(timezone.utc).isoformat(),
+                "snapshot_url": snapshot_url,
+            }
+            if extra:
+                event.update(extra)
+            analysis_pipeline.add_event(job_id, event)
+
+        weapon_dets = meta.get("weapon_detections") or []
+        weapon_now = bool(weapon_dets)
+        if weapon_now and not self._active_state["weapon"]:
+            top = max(weapon_dets, key=lambda d: d.get("confidence", 0.0))
+            bbox = top.get("bbox")
+            _log(
+                "weapon",
+                top.get("label", "weapon"),
+                top.get("confidence", 0.0),
+                {
+                    "bbox": bbox,
+                    "location": analysis_pipeline._describe_location(
+                        bbox, frame_w, frame_h, label
+                    ),
+                },
+                snap_dets=weapon_dets,
+            )
+        self._active_state["weapon"] = weapon_now
+
+        ocr_dets = meta.get("ocr_detections") or []
+        plate_now = bool(ocr_dets)
+        if plate_now:
+            top = max(ocr_dets, key=lambda d: d.get("confidence", 0.0))
+            plate_text = (
+                top.get("plate_number")
+                or top.get("text")
+                or top.get("label")
+                or "PLATE"
+            )
+            plate_key = str(plate_text).strip().upper()
+            if (not self._active_state["plate"]) or (plate_key != self._last_plate_key):
+                bbox = top.get("bbox")
+                _log(
+                    "plate",
+                    plate_text,
+                    top.get("confidence", 0.0),
+                    {
+                        "bbox": bbox,
+                        "plate_number": top.get("plate_number"),
+                        "ocr_confidence": top.get("ocr_confidence"),
+                        "location": analysis_pipeline._describe_location(
+                            bbox, frame_w, frame_h, label
+                        ),
+                    },
+                    snap_dets=ocr_dets,
+                )
+                self._last_plate_key = plate_key
+        else:
+            self._last_plate_key = None
+        self._active_state["plate"] = plate_now
+
+        anomaly = meta.get("anomaly") or {}
+        anomaly_now = bool(anomaly.get("detected"))
+        if anomaly_now and not self._active_state["anomaly"]:
+            _log(
+                "anomaly",
+                "Anomalous activity",
+                0.0,
+                {
+                    "reconstruction_error": anomaly.get("error"),
+                    "threshold": anomaly.get("threshold"),
+                    "location": analysis_pipeline._describe_location(
+                        None, frame_w, frame_h, label
+                    ),
+                },
+            )
+        self._active_state["anomaly"] = anomaly_now
+
+        violence = meta.get("violence") or {}
+        violence_now = str(violence.get("prediction") or "").upper() == "FIGHT"
+        if violence_now and not self._active_state["violence"]:
+            _log(
+                "violence",
+                "Fight / violent activity",
+                violence.get("confidence", 0.0),
+                {
+                    "location": analysis_pipeline._describe_location(
+                        None, frame_w, frame_h, label
+                    ),
+                },
+            )
+        self._active_state["violence"] = violence_now
+
     def _capture_loop(self) -> None:
         logger.info("Live capture loop started for %s", self._source_label)
         window_frames = 0
         window_t0 = time.perf_counter()
+        self._loop_started_monotonic = time.perf_counter()
+        self._active_state = {
+            "weapon": False,
+            "plate": False,
+            "anomaly": False,
+            "violence": False,
+        }
+        self._last_plate_key = None
 
         while not self._stop_event.is_set():
             with self._lock:
@@ -292,6 +427,10 @@ class LiveMonitor:
                     annotated, meta = self._processor.process_frame(
                         frame, source_label=label, draw=True
                     )
+                    try:
+                        self._emit_live_events(frame, meta, label)
+                    except Exception:
+                        logger.exception("Live alert emit failed")
                 else:
                     # Light HUD so preview is clearly live (no AI yet).
                     annotated = frame.copy()

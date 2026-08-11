@@ -6,7 +6,7 @@
 <title>Signal Intake</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/css/styles.css">
+<link rel="stylesheet" href="/css/styles.css?v=3">
 </head>
 <body>
 
@@ -17,6 +17,30 @@
 </div>
 
 <div class="app">
+
+  <aside class="side-nav" id="sideNav" aria-label="Main">
+    <div class="side-nav-brand">
+      <div class="brand-mark side-mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#3FE8D0" stroke-width="1.6"><path d="M2 12c2-4 5-6 10-6s8 2 10 6c-2 4-5 6-10 6s-8-2-10-6z"/><circle cx="12" cy="12" r="2.4"/></svg>
+      </div>
+      <div class="side-nav-title">NETRA</div>
+    </div>
+    <nav class="side-nav-menu">
+      <button type="button" class="side-nav-item active" data-view="history" id="navHistory" aria-current="page"
+        onclick="window.NetraApp && window.NetraApp.showView('history'); return false;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5h16M4 12h16M4 19h10"/><circle cx="18" cy="19" r="2"/></svg>
+        <span>History</span>
+      </button>
+      <button type="button" class="side-nav-item" data-view="alert" id="navAlert"
+        onclick="window.NetraApp && window.NetraApp.showView('alert'); return false;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3a6 6 0 016 6c0 4 2 5 2 5H4s2-1 2-5a6 6 0 016-6z"/><path d="M10 19a2 2 0 004 0"/></svg>
+        <span>Alert</span>
+        <span class="side-nav-badge" id="alertBadge" style="display:none;">0</span>
+      </button>
+    </nav>
+  </aside>
+
+  <div class="app-main">
 
   <header>
     <div class="brand">
@@ -33,6 +57,8 @@
       BACK
     </button>
   </header>
+
+  <div class="view-panel active" id="viewHistory" data-view-panel="history">
 
   <section id="hub">
     <h1 class="hub-title">Select where the video feed comes from. <span>The console adapts to whatever you pick.</span></h1>
@@ -227,20 +253,84 @@
       <div class="report-block">
         <div class="panel-label">EVENT REPORT / TIMELINE</div>
         <div class="report-summary" id="reportSummary"></div>
-        <p class="report-empty" id="reportEmpty">No events logged yet — detections with a video timestamp and evidence frame will appear here as the video is analysed.</p>
-        <div class="report-timeline" id="reportTimeline"></div>
+        <p class="report-empty" id="reportEmpty">No events logged yet — click an event to open its evidence frame and jump the video.</p>
+        <div class="history-layout">
+          <div class="report-timeline" id="reportTimeline"></div>
+          <div class="alert-frame-col history-frame-col" id="historyFrameViewer">
+            <div class="panel-label">EVIDENCE FRAME</div>
+            <div class="alert-frame-empty" id="historyFrameEmpty">Select an event to view the detection frame.</div>
+            <div class="alert-frame-body" id="historyFrameBody" style="display:none;">
+              <img id="historyFrameImage" class="alert-frame-image" alt="Event evidence frame" />
+              <div class="alert-frame-meta" id="historyFrameMeta"></div>
+            </div>
+          </div>
+        </div>
       </div>
+
     </div>
 
   </section>
+  </div><!-- /viewHistory -->
 
+  <div class="view-panel" id="viewAlert" data-view-panel="alert" hidden>
+    <section class="alert-page">
+      <div class="ws-header">
+        <div class="ws-source-num">OPS / ALERTS</div>
+        <h2 class="ws-source-name">Detection frames</h2>
+        <p class="ws-source-desc">Click a frame card to enlarge it. These are the frames where weapon, plate, anomaly, or violence was detected.</p>
+      </div>
+
+      <div id="alertsPanel">
+        <div class="report-summary" id="alertsStatus"></div>
+        <div class="alert-frame-grid" id="alertsRecent"></div>
+
+        <div class="alert-frame-col alert-frame-lightbox" id="alertFrameViewer" style="display:none;">
+          <div class="panel-label">SELECTED FRAME</div>
+          <div class="alert-frame-empty" id="alertFrameEmpty" style="display:none;"></div>
+          <div class="alert-frame-body" id="alertFrameBody">
+            <img id="alertFrameImage" class="alert-frame-image" alt="Alert evidence frame" />
+            <div class="alert-frame-meta" id="alertFrameMeta"></div>
+            <div class="alert-frame-actions" id="alertFrameActions"></div>
+          </div>
+        </div>
+
+        <details class="alert-config-details" style="margin-top:28px;">
+          <summary class="panel-label" style="cursor:pointer;">WEBHOOK ROUTING</summary>
+          <p class="side-note">Rules + watchlists route detections to operators with snapshot/clip context.</p>
+
+          <label class="field" style="margin-top:12px;">
+            <span>Public base URL (for absolute snapshot/clip links)</span>
+            <input type="text" id="alertPublicBase" placeholder="http://127.0.0.1:8000" />
+          </label>
+
+          <div class="field-row" style="margin-top:10px; gap:10px; align-items:flex-end;">
+            <label class="field" style="flex:1;">
+              <span>Operator webhook URL</span>
+              <input type="url" id="alertWebhookUrl" placeholder="https://hooks.example.com/netra" />
+            </label>
+            <button type="button" class="btn" id="alertSaveWebhookBtn">SAVE WEBHOOK</button>
+            <button type="button" class="btn btn-ghost" id="alertTestWebhookBtn">TEST</button>
+          </div>
+
+          <label class="field" style="margin-top:12px;">
+            <span>Plate watchlist (comma or newline separated)</span>
+            <textarea id="alertWatchlistValues" rows="3" placeholder="KA02HN182, MH12AB1234"></textarea>
+          </label>
+          <button type="button" class="btn btn-ghost" id="alertSaveWatchlistBtn" style="margin-top:8px;">SAVE WATCHLIST</button>
+        </details>
+      </div>
+    </section>
+  </div><!-- /viewAlert -->
+
+  </div><!-- /app-main -->
 </div>
 
-<script src="/js/analysis.js"></script>
-<script src="/js/live.js"></script>
-<script src="/js/upload.js"></script>
-<script src="/js/drive.js"></script>
-<script src="/js/app.js"></script>
+<script src="/js/analysis.js?v=3"></script>
+<script src="/js/alerts.js?v=4"></script>
+<script src="/js/live.js?v=3"></script>
+<script src="/js/upload.js?v=3"></script>
+<script src="/js/drive.js?v=3"></script>
+<script src="/js/app.js?v=3"></script>
 
 </body>
 </html>

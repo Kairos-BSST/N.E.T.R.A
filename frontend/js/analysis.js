@@ -177,6 +177,47 @@ window.NetraAnalysis = {
     if (link) link.style.display = 'none';
     const plates = document.getElementById('platesFound');
     if (plates) plates.remove();
+    const histEmpty = document.getElementById('historyFrameEmpty');
+    const histBody = document.getElementById('historyFrameBody');
+    if (histEmpty) {
+      histEmpty.style.display = 'block';
+      histEmpty.textContent = 'Select an event to view the detection frame.';
+    }
+    if (histBody) histBody.style.display = 'none';
+  },
+
+  showHistoryFrame(ev) {
+    const empty = document.getElementById('historyFrameEmpty');
+    const body = document.getElementById('historyFrameBody');
+    const img = document.getElementById('historyFrameImage');
+    const meta = document.getElementById('historyFrameMeta');
+    if (!empty || !body || !img || !meta) return;
+
+    document.querySelectorAll('#reportTimeline .report-row').forEach((row) => {
+      row.classList.toggle('active-alert', row.dataset.eventId === ev.event_id);
+    });
+
+    if (!ev.snapshot_url) {
+      empty.style.display = 'block';
+      empty.textContent = 'This event has no evidence snapshot.';
+      body.style.display = 'none';
+      return;
+    }
+
+    empty.style.display = 'none';
+    body.style.display = 'block';
+    img.src = ev.snapshot_url;
+    img.alt = `${(ev.type || 'event').toUpperCase()} evidence frame`;
+
+    const conf = ev.confidence ? `${(ev.confidence * 100).toFixed(1)}%` : '—';
+    const plate = ev.plate_number ? ` · ${ev.plate_number}` : '';
+    meta.innerHTML = `
+      <strong>${(ev.type || 'EVENT').toUpperCase()}</strong> · ${ev.label || ''}${plate} · ${conf}<br/>
+      <span class="muted">frame #${ev.frame_number || '—'} · ${ev.video_timestamp || ''}</span><br/>
+      <span class="muted">${ev.location || ''}</span>
+      ${ev.snapshot_url ? `<br/><a href="${ev.snapshot_url}" target="_blank" rel="noopener">Open full image</a>` : ''}
+    `;
+    body.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   },
 
   renderEvents(events) {
@@ -197,9 +238,10 @@ window.NetraAnalysis = {
 
       const row = document.createElement('div');
       row.className = 'report-row';
+      row.dataset.eventId = ev.event_id || '';
       row.tabIndex = 0;
       row.setAttribute('role', 'button');
-      row.title = `Jump video to ${ev.video_timestamp}`;
+      row.title = `View frame at ${ev.video_timestamp}`;
       row.innerHTML = `
         ${ev.snapshot_url
           ? `<img class="report-thumb" src="${ev.snapshot_url}" alt="${meta.title} evidence frame" />`
@@ -210,12 +252,15 @@ window.NetraAnalysis = {
             <span class="report-timestamp">${ev.video_timestamp}</span>
           </div>
           <div class="report-label">${ev.label || ''}${plateBit}${ev.confidence ? ` · ${(ev.confidence * 100).toFixed(1)}%` : ''}</div>
-          <div class="report-frame">frame #${ev.frame_number}${ev.location ? ` · ${ev.location}` : ''}${ev.bbox ? ' · boxed' : ''}</div>
+          <div class="report-frame">frame #${ev.frame_number}${ev.location ? ` · ${ev.location}` : ''} · click to open frame</div>
         </div>`;
-      const jump = () => this.seekVideoTo(ev.video_time_seconds, ev);
-      row.addEventListener('click', jump);
+      const open = () => {
+        this.showHistoryFrame(ev);
+        this.seekVideoTo(ev.video_time_seconds, ev);
+      };
+      row.addEventListener('click', open);
       row.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); jump(); }
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
       });
       list.prepend(row); // newest first
     });
