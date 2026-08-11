@@ -73,3 +73,11 @@ analysis_snapshots/
 Thumbs.db
 .vscode/
 .idea/
+
+# NETRA local auth/database and secrets
+backend/netra.db
+backend/netra.db-shm
+backend/netra.db-wal
+backend/.env
+backend/env
+.env

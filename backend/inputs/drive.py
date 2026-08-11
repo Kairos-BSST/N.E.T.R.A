@@ -1,74 +1,39 @@
-"""
-inputs/drive.py
----------------
-Google Drive OAuth + video fetch.
-
-Downloaded Drive videos are stored locally and then processed
-asynchronously through the shared N.E.T.R.A analysis pipeline.
-"""
+"""Google Drive OAuth + video fetch for authenticated NETRA operators."""
+from __future__ import annotations
 
 import logging
 import os
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 import analysis_pipeline
+import database
 import drive_auth
+from auth import current_user
 from config import Config
 from deps import state
 from drive_client import DriveClient
 from file_utils import safe_filename
 
-
 logger = logging.getLogger("netra.drive")
 router = APIRouter(tags=["drive"])
 
 
-# ============================================================
-# Session helper
-# ============================================================
-
 def _get_session_id(request: Request) -> Optional[str]:
-    return request.cookies.get(
-        Config.SESSION_COOKIE_NAME
-    )
+    return request.cookies.get(Config.SESSION_COOKIE_NAME)
 
-
-# ============================================================
-# Google OAuth
-# ============================================================
 
 @router.get("/auth/google/login")
-def google_login():
-
+def google_login(user=Depends(current_user)):
     try:
-        auth_url, oauth_state = (
-            drive_auth.get_authorization_url()
-        )
-
+        auth_url, oauth_state = drive_auth.get_authorization_url()
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "Could not start OAuth flow: "
-                f"{exc}"
-            ),
-        )
-
-    response = RedirectResponse(
-        url=auth_url
-    )
-
-    response.set_cookie(
-        "oauth_state",
-        oauth_state,
-        max_age=600,
-        httponly=True,
-    )
-
+        raise HTTPException(status_code=500, detail=f"Could not start OAuth flow: {exc}") from exc
+    response = RedirectResponse(url=auth_url)
+    response.set_cookie("oauth_state", oauth_state, max_age=600, httponly=True, samesite="lax")
     return response
 
 
@@ -79,149 +44,42 @@ def google_callback(
     code: str = None,
     state: str = None,
     error: str = None,
+    user=Depends(current_user),
 ):
-
     if error:
-        return RedirectResponse(
-            url=(
-                "/?drive_auth=denied"
-                f"&reason={error}"
-            )
-        )
-
+        return RedirectResponse(url=f"/?drive_auth=denied&reason={error}")
     if not code or not state:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Missing code or state "
-                "in OAuth callback."
-            ),
-        )
-
+        raise HTTPException(status_code=400, detail="Missing code or state in OAuth callback.")
     try:
-
-        credentials = (
-            drive_auth.exchange_code_for_credentials(
-                code,
-                state,
-            )
-        )
-
+        credentials = drive_auth.exchange_code_for_credentials(code, state)
+        session_id = _get_session_id(request)
+        drive_auth.store_credentials(session_id, credentials)
     except Exception as exc:
-
-        logger.exception(
-            "OAuth code exchange failed"
-        )
-
-        return RedirectResponse(
-            url=(
-                "/?drive_auth=error"
-                f"&reason={str(exc)[:100]}"
-            )
-        )
-
-    session_id = (
-        _get_session_id(request)
-        or drive_auth.new_session_id()
-    )
-
-    drive_auth.store_credentials(
-        session_id,
-        credentials,
-    )
-
-    redirect = RedirectResponse(
-        url="/?drive_auth=success"
-    )
-
-    redirect.set_cookie(
-        Config.SESSION_COOKIE_NAME,
-        session_id,
-        max_age=60 * 60 * 24 * 7,
-        httponly=True,
-        samesite="lax",
-    )
-
-    redirect.delete_cookie(
-        "oauth_state"
-    )
-
+        logger.exception("OAuth code exchange failed")
+        return RedirectResponse(url=f"/?drive_auth=error&reason={str(exc)[:100]}")
+    redirect = RedirectResponse(url="/?drive_auth=success")
+    redirect.delete_cookie("oauth_state")
+    database.record_audit(user["id"], "DRIVE_AUTHORIZED")
     return redirect
 
 
 @router.get("/auth/google/status")
-def google_auth_status(
-    request: Request,
-):
+def google_auth_status(request: Request, user=Depends(current_user)):
+    return {"connected": drive_auth.is_connected(_get_session_id(request))}
 
-    session_id = _get_session_id(
-        request
-    )
-
-    return {
-        "connected": drive_auth.is_connected(
-            session_id
-        )
-    }
-
-
-# ============================================================
-# Drive files
-# ============================================================
 
 @router.get("/drive/files")
-def list_drive_files(
-    request: Request,
-):
-
-    session_id = _get_session_id(
-        request
-    )
-
-    credentials = (
-        drive_auth.get_credentials(
-            session_id
-        )
-    )
-
+def list_drive_files(request: Request, user=Depends(current_user)):
+    credentials = drive_auth.get_credentials(_get_session_id(request))
     if credentials is None:
-        raise HTTPException(
-            status_code=401,
-            detail=(
-                "Not connected to Google Drive. "
-                "Call /auth/google/login first."
-            ),
-        )
-
+        raise HTTPException(status_code=401, detail="Not connected to Google Drive. Call /auth/google/login first.")
     try:
-
-        drive = DriveClient(
-            credentials
-        )
-
-        files = drive.list_video_files()
-
+        files = DriveClient(credentials).list_video_files()
     except Exception as exc:
+        logger.exception("Drive files.list failed")
+        raise HTTPException(status_code=502, detail=f"Drive API error: {exc}") from exc
+    return {"files": files}
 
-        logger.exception(
-            "Drive files.list failed"
-        )
-
-        raise HTTPException(
-            status_code=502,
-            detail=(
-                f"Drive API error: {exc}"
-            ),
-        )
-
-    return {
-        "files": files
-    }
-
-
-# ============================================================
-# Drive fetch
-# ============================================================
 
 class DriveFetchRequest(BaseModel):
     file_id: str
@@ -229,147 +87,39 @@ class DriveFetchRequest(BaseModel):
 
 
 @router.post("/drive/fetch")
-def fetch_drive_file(
-    req: DriveFetchRequest,
-    request: Request,
-):
-
-    # --------------------------------------------------------
-    # Authentication
-    # --------------------------------------------------------
-
-    session_id = _get_session_id(
-        request
-    )
-
-    credentials = (
-        drive_auth.get_credentials(
-            session_id
-        )
-    )
-
+def fetch_drive_file(req: DriveFetchRequest, request: Request, user=Depends(current_user)):
+    credentials = drive_auth.get_credentials(_get_session_id(request))
     if credentials is None:
-        raise HTTPException(
-            status_code=401,
-            detail=(
-                "Not connected to Google Drive. "
-                "Call /auth/google/login first."
-            ),
-        )
+        raise HTTPException(status_code=401, detail="Not connected to Google Drive. Call /auth/google/login first.")
 
-    # --------------------------------------------------------
-    # Local destination
-    # --------------------------------------------------------
-
-    name = safe_filename(
-        req.file_name
-    )
-
+    name = safe_filename(req.file_name)
     Config.ensure_storage_dirs()
-
-    local_path = os.path.join(
-        Config.LOCAL_DRIVE_DOWNLOAD_DIR,
-        name,
-    )
-
-    # --------------------------------------------------------
-    # Download file
-    # --------------------------------------------------------
-
+    local_path = os.path.join(Config.LOCAL_DRIVE_DOWNLOAD_DIR, name)
     try:
-
-        drive = DriveClient(
-            credentials
-        )
-
-        size = drive.download_file(
-            req.file_id,
-            local_path,
-        )
-
+        size = DriveClient(credentials).download_file(req.file_id, local_path)
     except Exception as exc:
+        logger.exception("Drive file download failed")
+        raise HTTPException(status_code=502, detail=f"Drive download failed: {exc}") from exc
 
-        logger.exception(
-            "Drive file download failed"
-        )
-
-        raise HTTPException(
-            status_code=502,
-            detail=(
-                f"Drive download failed: {exc}"
-            ),
-        )
-
-    # --------------------------------------------------------
-    # Register downloaded video
-    # --------------------------------------------------------
-
-    state.mark_fetched(
-        req.file_id,
-        local_path,
-        size,
+    state.mark_fetched(req.file_id, local_path, size)
+    analysis = analysis_pipeline.queue_for_analysis(
+        source=analysis_pipeline.SOURCE_DRIVE,
+        local_path=local_path,
+        original_name=name,
+        extra={"file_id": req.file_id, "user_id": user["id"]},
     )
-
-    # --------------------------------------------------------
-    # Create analysis job
-    # --------------------------------------------------------
-
-    analysis = (
-        analysis_pipeline.queue_for_analysis(
-            source=analysis_pipeline.SOURCE_DRIVE,
-            local_path=local_path,
-            original_name=name,
-            extra={
-                "file_id": req.file_id,
-            },
-        )
+    database.record_audit(
+        user["id"], "DRIVE_FETCHED", job_id=analysis["job_id"],
+        resource_type="video", resource_id=analysis["job_id"],
+        details={"file_name": name, "file_id": req.file_id, "source": "drive"},
     )
-
-    # --------------------------------------------------------
-    # Start background analysis
-    # --------------------------------------------------------
-
     try:
-
-        analysis = (
-            analysis_pipeline.start_file_analysis(
-                analysis["job_id"]
-            )
-        )
-
+        analysis = analysis_pipeline.start_file_analysis(analysis["job_id"])
     except Exception as exc:
-
-        logger.exception(
-            "Could not start analysis "
-            "for Drive video"
-        )
-
+        logger.exception("Could not start analysis for Drive video")
         analysis_pipeline.update_job(
-            analysis["job_id"],
-            status="failed",
-            message=(
-                "Drive download succeeded but "
-                "analysis could not start: "
-                f"{exc}"
-            ),
-            error=str(exc),
+            analysis["job_id"], status="failed",
+            message=f"Drive download succeeded but analysis could not start: {exc}", error=str(exc),
         )
-
-        updated = analysis_pipeline.get_job(
-            analysis["job_id"]
-        )
-
-        if updated is not None:
-            analysis = updated
-
-    # --------------------------------------------------------
-    # Response
-    # --------------------------------------------------------
-
-    return {
-        "status": "fetched",
-        "file_id": req.file_id,
-        "local_path": local_path,
-        "size_bytes": size,
-        "analysis": analysis,
-    }
+        analysis = analysis_pipeline.get_job(analysis["job_id"]) or analysis
+    return {"status": "fetched", "file_id": req.file_id, "local_path": local_path, "size_bytes": size, "analysis": analysis}

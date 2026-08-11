@@ -55,7 +55,10 @@ def _snapshot_path_from_url(snapshot_url: str) -> str:
     snapshot_url looks like /snapshots/{job_id}/{event_id}.jpg — map that
     back to the real file on disk under Config.SNAPSHOT_DIR.
     """
-    rel = snapshot_url.split("/snapshots/", 1)[-1]
+    if "/evidence/snapshots/" in snapshot_url:
+        rel = snapshot_url.split("/evidence/snapshots/", 1)[-1]
+    else:
+        rel = snapshot_url.split("/snapshots/", 1)[-1]
     return os.path.join(Config.SNAPSHOT_DIR, rel)
 
 

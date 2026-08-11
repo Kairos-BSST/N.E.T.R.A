@@ -12,9 +12,11 @@ import logging
 import os
 import uuid
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from auth import current_user
 
 import analysis_pipeline
+import database
 from config import Config
 from deps import state
 from file_utils import is_allowed_video, safe_filename
@@ -26,7 +28,7 @@ router = APIRouter(tags=["upload"])
 
 
 @router.post("/upload")
-async def upload_video(file: UploadFile = File(...)):
+async def upload_video(file: UploadFile = File(...), user=Depends(current_user)):
     """
     Accept a video from the Signal Intake upload panel.
 
@@ -185,10 +187,17 @@ async def upload_video(file: UploadFile = File(...)):
             local_path=local_path,
             original_name=original,
             extra={
+                "user_id": user["id"],
                 "content_type": content_type,
                 "stored_as": unique_name,
             },
         )
+    )
+
+    database.record_audit(
+        user["id"], "VIDEO_UPLOADED", job_id=analysis["job_id"],
+        resource_type="video", resource_id=analysis["job_id"],
+        details={"original_name": original, "source": "upload", "size_bytes": size},
     )
 
     # --------------------------------------------------------

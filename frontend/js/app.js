@@ -1,8 +1,6 @@
-/* app.js — hub navigation + History / Alert side menu */
-
+/* app.js — final NETRA role-aware navigation and source workspace */
 (function () {
-  function $(id) { return document.getElementById(id); }
-
+  const $ = (id) => document.getElementById(id);
   const hub = $('hub');
   const workspace = $('workspace');
   const backBtn = $('backBtn');
@@ -10,140 +8,109 @@
   const wsSourceName = $('wsSourceName');
   const wsSourceDesc = $('wsSourceDesc');
   const sideNav = $('sideNav');
+  let driveHooks = null;
+  let initialized = false;
 
   const sourceMeta = {
-    live: {
-      num: 'SOURCE / 01',
-      name: 'Live CCTV',
-      desc: 'Hikvision, Dahua, CP Plus, custom RTSP, or local webcam — one AI pipeline.',
-      color: 'var(--live)',
-      panel: 'live',
-    },
-    upload: {
-      num: 'SOURCE / 02',
-      name: 'Upload Video',
-      desc: 'Send a video file straight from your device for analysis.',
-      color: 'var(--upload)',
-      panel: 'upload',
-    },
-    drive: {
-      num: 'SOURCE / 03',
-      name: 'Fetch from Drive',
-      desc: 'Authorize Drive access and pull a file directly by API.',
-      color: 'var(--drive)',
-      panel: 'drive',
-    },
+    live: { num: 'SOURCE / 01', name: 'Live CCTV', desc: 'Hikvision, Dahua, CP Plus, custom RTSP, or local webcam — one AI pipeline.', color: 'var(--live)', panel: 'live' },
+    upload: { num: 'SOURCE / 02', name: 'Upload Video', desc: 'Send a video file straight from your device for analysis.', color: 'var(--upload)', panel: 'upload' },
+    drive: { num: 'SOURCE / 03', name: 'Fetch from Drive', desc: 'Authorize Drive access and pull a file directly by API.', color: 'var(--drive)', panel: 'drive' },
   };
 
+  function enforceRoleVisibility(role) {
+    const isAdmin = role === 'administrator';
+    document.querySelectorAll('.admin-only').forEach((el) => { el.hidden = !isAdmin; });
+    document.querySelectorAll('.operator-only').forEach((el) => { el.hidden = isAdmin; });
+  }
+
   function showView(view) {
-    const name = String(view || 'history').toLowerCase();
+    const name = String(view || '').toLowerCase();
+    const allowed = ['dashboard', 'alert', 'history', 'adminactivity', 'adminscans', 'adminoperators'];
+    const target = allowed.includes(name) ? name : 'dashboard';
 
     document.querySelectorAll('[data-view-panel]').forEach((panel) => {
-      const on = (panel.getAttribute('data-view-panel') || '') === name;
-      if (on) {
-        panel.hidden = false;
-        panel.removeAttribute('hidden');
-        panel.classList.add('active');
-        panel.style.display = 'block';
-      } else {
-        panel.hidden = true;
-        panel.setAttribute('hidden', '');
-        panel.classList.remove('active');
-        panel.style.display = 'none';
-      }
+      const on = String(panel.dataset.viewPanel || '').toLowerCase() === target;
+      panel.hidden = !on;
+      panel.classList.toggle('active', on);
+      panel.style.display = on ? 'block' : 'none';
     });
 
     document.querySelectorAll('.side-nav-item').forEach((btn) => {
-      const on = (btn.getAttribute('data-view') || '') === name;
+      const on = String(btn.dataset.view || '').toLowerCase() === target;
       btn.classList.toggle('active', on);
       btn.setAttribute('aria-current', on ? 'page' : 'false');
     });
 
-    if (name === 'alert') {
-      if (window.NetraAlerts && typeof window.NetraAlerts.refreshRecent === 'function') {
-        window.NetraAlerts.refreshRecent().then(() => {
-          const first = (window.NetraAlerts._alerts || [])[0];
-          if (first) window.NetraAlerts.showFrame(first);
-        }).catch(() => {});
-      }
+    if (target === 'dashboard') {
+      hub?.classList.remove('hidden');
+      workspace?.classList.remove('active');
+      backBtn?.classList.remove('show');
+      window.NetraHistory?.loadDashboard?.();
+    } else if (target === 'alert') {
+      window.NetraAlerts?.refreshRecent?.();
+    } else if (target === 'history') {
+      window.NetraHistory?.refresh?.();
+    } else if (target === 'adminactivity') {
+      window.NetraHistory?.loadAdmin?.();
+    } else if (target === 'adminscans') {
+      window.NetraHistory?.loadAdminScans?.();
+    } else if (target === 'adminoperators') {
+      window.NetraHistory?.loadOperators?.();
     }
   }
 
   function selectSource(source) {
     const meta = sourceMeta[source];
     if (!meta) return;
-    showView('history');
-    if (hub) hub.classList.add('hidden');
-    if (workspace) {
-      workspace.classList.add('active');
-      workspace.style.setProperty('--accent', meta.color);
-    }
+    showView('dashboard');
+    hub?.classList.add('hidden');
+    workspace?.classList.add('active');
+    workspace?.style.setProperty('--accent', meta.color);
     if (wsSourceNum) wsSourceNum.textContent = meta.num;
     if (wsSourceName) wsSourceName.textContent = meta.name;
     if (wsSourceDesc) wsSourceDesc.textContent = meta.desc;
-
-    document.querySelectorAll('#workspace .ws-grid').forEach((g) => {
-      g.style.display = g.dataset.panel === meta.panel ? 'grid' : 'none';
+    document.querySelectorAll('#workspace .ws-grid').forEach((grid) => {
+      grid.style.display = grid.dataset.panel === meta.panel ? 'grid' : 'none';
     });
-
-    if (backBtn) backBtn.classList.add('show');
-    if (driveHooks && driveHooks.onSourceSelected) driveHooks.onSourceSelected(source);
+    backBtn?.classList.add('show');
+    window.NetraAlerts?.setCurrentJob?.(null);
+    driveHooks?.onSourceSelected?.(source);
   }
 
-  // Event delegation — survives re-renders and is hard to miss-click.
-  if (sideNav) {
-    sideNav.addEventListener('click', (e) => {
-      const btn = e.target.closest('.side-nav-item, [data-view]');
-      if (!btn || !sideNav.contains(btn)) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const view = btn.getAttribute('data-view');
-      if (view) showView(view);
+  function bindNavigation() {
+    sideNav?.addEventListener('click', (event) => {
+      const btn = event.target.closest('.side-nav-item');
+      if (!btn || btn.hidden) return;
+      event.preventDefault();
+      showView(btn.dataset.view);
     });
+
+    document.querySelectorAll('.card[data-source]').forEach((card) => {
+      const open = () => selectSource(card.dataset.source);
+      card.addEventListener('click', open);
+      card.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); } });
+    });
+
+    backBtn?.addEventListener('click', () => showView('dashboard'));
+    $('dashOpenHistory')?.addEventListener('click', () => showView('history'));
   }
 
-  // Direct bindings as backup
-  const navHistory = $('navHistory');
-  const navAlert = $('navAlert');
-  if (navHistory) {
-    navHistory.addEventListener('click', (e) => {
-      e.preventDefault();
-      showView('history');
-    });
-  }
-  if (navAlert) {
-    navAlert.addEventListener('click', (e) => {
-      e.preventDefault();
-      showView('alert');
-    });
-  }
-
-  document.querySelectorAll('.card').forEach((card) => {
-    const open = () => selectSource(card.dataset.source);
-    card.addEventListener('click', open);
-    card.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') open();
-    });
-  });
-
-  if (backBtn) {
-    backBtn.addEventListener('click', () => {
-      showView('history');
-      if (hub) hub.classList.remove('hidden');
-      if (workspace) workspace.classList.remove('active');
-      backBtn.classList.remove('show');
-    });
+  function init(user) {
+    if (initialized) return;
+    initialized = true;
+    enforceRoleVisibility(user?.role);
+    bindNavigation();
+    try {
+      window.NetraLive?.init?.();
+      window.NetraUpload?.init?.();
+      if (window.NetraDrive) driveHooks = window.NetraDrive.init({ selectSource });
+      window.NetraHistory?.init?.(user);
+      window.NetraAlerts?.bind?.();
+    } catch (err) {
+      console.error('NETRA module initialization failed', err);
+    }
+    showView(user?.role === 'administrator' ? 'adminActivity' : 'dashboard');
   }
 
-  let driveHooks = null;
-  try {
-    if (window.NetraLive) window.NetraLive.init();
-    if (window.NetraUpload) window.NetraUpload.init();
-    if (window.NetraDrive) driveHooks = window.NetraDrive.init({ selectSource });
-  } catch (err) {
-    console.error('Netra module init failed', err);
-  }
-
-  window.NetraApp = { showView, selectSource };
-  showView('history');
+  window.NetraApp = { showView, selectSource, init, enforceRoleVisibility };
 })();

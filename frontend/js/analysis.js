@@ -116,6 +116,7 @@ window.NetraAnalysis = {
   },
 
   setState(job, opts = {}) {
+    if (window.NetraAlerts) window.NetraAlerts.setCurrentJob(job?.job_id || null);
     const analysisPill = document.getElementById('analysisPill');
     const analysisPillText = document.getElementById('analysisPillText');
     const analysisMsg = document.getElementById('analysisMsg');

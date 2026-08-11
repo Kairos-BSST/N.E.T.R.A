@@ -8,6 +8,7 @@ Models:
 2. Number plate detection - YOLO (OCR.pt)
 3. Anomaly detection      - Convolutional Autoencoder (anomaly.pth)
 4. Violence detection     - MC3-18 (violence.pth)
+5. Crowd density/counting  - LWCC DM-Count (pretrained)
 
 Designed for CPU-only / low-memory systems.
 
@@ -27,6 +28,7 @@ import os
 import re
 import threading
 import time
+import tempfile
 from collections import deque
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple
@@ -58,6 +60,12 @@ ENABLE_WEAPON = _env_bool("ENABLE_WEAPON", True)
 ENABLE_OCR = _env_bool("ENABLE_OCR", True)
 ENABLE_ANOMALY = _env_bool("ENABLE_ANOMALY", True)
 ENABLE_VIOLENCE = _env_bool("ENABLE_VIOLENCE", True)
+ENABLE_CROWD = _env_bool("ENABLE_CROWD", True)
+
+# Crowd-density alert: raise an alert when the estimated number of people
+# in a frame reaches this threshold. LWCC/DM-Count is CPU-based.
+CROWD_THRESHOLD = int(os.getenv("CROWD_THRESHOLD", "40"))
+CROWD_INTERVAL = int(os.getenv("CROWD_INTERVAL", "15"))
 
 # A raw hit must survive this many consecutive inference checks before it
 # is treated as a real detection. One-frame YOLO flukes (car panel =
@@ -137,6 +145,7 @@ _ocr_recognition_model = None
 _anomaly_model = None
 _violence_model = None
 _violence_transform = None
+_crowd_model = None
 
 _torch = None
 
@@ -146,6 +155,7 @@ _model_status: Dict[str, str] = {
     "ocr_recognition": "not_loaded",
     "anomaly": "not_loaded",
     "violence": "not_loaded",
+    "crowd": "not_loaded",
 }
 
 _model_errors: Dict[str, str] = {}
@@ -638,6 +648,80 @@ def _load_violence_model() -> bool:
         )
 
         return False
+
+
+# ============================================================
+# Crowd-density model (LWCC / DM-Count)
+# ============================================================
+
+def _load_crowd_model() -> bool:
+    """Load LWCC DM-Count once for the whole backend process."""
+    global _crowd_model
+
+    if not ENABLE_CROWD:
+        return False
+
+    if _crowd_model is not None:
+        return True
+
+    if _model_status["crowd"] == "failed":
+        return False
+
+    try:
+        from lwcc import LWCC
+
+        _crowd_model = LWCC.load_model(
+            model_name="DM-Count",
+            model_weights="SHA",
+        )
+
+        _model_status["crowd"] = "loaded"
+        logger.info("Crowd-density model (LWCC DM-Count/SHA) loaded on CPU.")
+        return True
+
+    except Exception as exc:
+        _model_status["crowd"] = "failed"
+        _model_errors["crowd"] = str(exc)
+        logger.exception("Unable to load crowd-density model")
+        return False
+
+
+def _run_crowd_detection(frame: np.ndarray) -> Tuple[float, bool]:
+    """Estimate people count and return (count, threshold_alert)."""
+    if not ENABLE_CROWD or not _load_crowd_model():
+        return 0.0, False
+
+    from lwcc import LWCC
+
+    temp_path = None
+    try:
+        # LWCC's public API accepts image paths. Write one temporary JPEG
+        # rather than changing the tested LWCC inference path.
+        fd, temp_path = tempfile.mkstemp(
+            prefix="netra_crowd_",
+            suffix=".jpg",
+        )
+        os.close(fd)
+
+        if not cv2.imwrite(temp_path, frame):
+            raise RuntimeError("Unable to create temporary frame for LWCC")
+
+        count = LWCC.get_count(
+            temp_path,
+            model=_crowd_model,
+            resize_img=True,
+        )
+
+        # LWCC returns a float count for a single image.
+        count_f = float(count)
+        return count_f, count_f >= CROWD_THRESHOLD
+
+    finally:
+        if temp_path:
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
 
 
 # ============================================================
@@ -1539,6 +1623,9 @@ class FrameProcessor:
             VIOLENCE_CONFIRM_HITS, DETECT_CLEAR_MISSES
         )
 
+        self.last_crowd_count = 0.0
+        self.last_crowd_alert = False
+
         # Small downsized grayscale snapshot of the last frame that was
         # actually run through the weapon/anomaly models -- used by
         # _frame_changed_significantly() to decide whether the scene has
@@ -1746,6 +1833,30 @@ class FrameProcessor:
                 )
 
         # --------------------------------------------------------
+        # Crowd density / count
+        # --------------------------------------------------------
+        if (
+            ENABLE_CROWD
+            and (frame_number == 1 or frame_number % CROWD_INTERVAL == 0)
+        ):
+            try:
+                (
+                    self.last_crowd_count,
+                    self.last_crowd_alert,
+                ) = _run_crowd_detection(frame)
+
+                if self.last_crowd_alert:
+                    logger.info(
+                        "Crowd threshold exceeded: %.1f people (threshold=%d) for %s",
+                        self.last_crowd_count,
+                        CROWD_THRESHOLD,
+                        source_label or self.label or "stream",
+                    )
+
+            except Exception:
+                logger.exception("Crowd-density inference failed")
+
+        # --------------------------------------------------------
         # Combined detections
         # --------------------------------------------------------
 
@@ -1813,6 +1924,13 @@ class FrameProcessor:
                 ),
                 "threshold": round(self.anomaly_threshold, 6),
                 "calibrated": self.anomaly_calibrated,
+            },
+
+            "crowd": {
+                "count": round(self.last_crowd_count, 2),
+                "threshold": CROWD_THRESHOLD,
+                "alert": self.last_crowd_alert,
+                "model": "LWCC-DM-Count-SHA",
             },
 
             "violence": {

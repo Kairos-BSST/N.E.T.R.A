@@ -26,6 +26,7 @@ import cv2
 import numpy as np
 
 from config import Config
+import database
 from webhook_client import send_event_webhook
 
 # alerting is imported lazily inside add_event to avoid circular imports
@@ -147,7 +148,14 @@ def _save_snapshot(
         ok = cv2.imwrite(full_path, out_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
         if not ok:
             return None
-        return f"/snapshots/{job_id}/{filename}"
+        try:
+            job = get_job(job_id)
+            database.add_evidence(
+                job_id, (job or {}).get("user_id"), "snapshot", full_path, filename, database.hash_file(full_path)
+            )
+        except Exception:
+            logger.exception("Could not persist snapshot evidence for job_id=%s", job_id)
+        return f"/evidence/snapshots/{job_id}/{filename}"
     except Exception:
         logger.exception("Failed to save snapshot for job_id=%s event_id=%s", job_id, event_id)
         return None
@@ -174,6 +182,11 @@ def add_event(job_id: str, event: Dict[str, Any]) -> None:
         events = job.setdefault("events", [])
         events.append(event)
         job_copy = dict(job)
+
+    try:
+        database.add_event(job_id, event)
+    except Exception:
+        logger.exception("Could not persist event for job_id=%s", job_id)
 
     try:
         import alerting
@@ -208,6 +221,7 @@ def queue_for_analysis(
 
     job = {
         "job_id": job_id,
+        "user_id": (extra or {}).get("user_id"),
         "source": source,
         "local_path": local_path,
         "stream_url": stream_url,
@@ -232,51 +246,15 @@ def queue_for_analysis(
     with _lock:
         _jobs[job_id] = job
 
-    logger.info(
-        "Analysis queued job_id=%s source=%s path=%s stream=%s",
-        job_id,
-        source,
-        local_path,
-        stream_url,
-    )
-
-    return _safe_job_copy(job)
-    # ... rest of the function (registering job in _jobs, etc.) unchanged
-    """
-    Register a source for analysis.
-
-    This function only creates the job.
-
-    For file-based sources, call start_file_analysis(job_id) after the
-    file has been successfully saved/downloaded.
-
-    Live sources are processed by live_monitor.py.
-    """
-
-    job_id = str(uuid.uuid4())
-
-    job = {
-        "job_id": job_id,
-        "source": source,
-        "local_path": local_path,
-        "stream_url": stream_url,
-        "original_name": original_name,
-        "status": "queued",
-        "message": "Accepted for analysis.",
-        "queued_at": _utc_now(),
-        "started_at": None,
-        "completed_at": None,
-        "updated_at": None,
-        "progress": 0.0,
-        "frames_processed": 0,
-        "total_frames": None,
-        "result": None,
-        "error": None,
-        "extra": extra or {},
-    }
-
-    with _lock:
-        _jobs[job_id] = job
+    try:
+        database.record_job(job)
+        database.record_audit(
+            job.get("user_id"), "ANALYSIS_QUEUED", job_id=job_id,
+            resource_type="analysis", resource_id=job_id,
+            details={"source": source, "original_name": original_name or "—"},
+        )
+    except Exception:
+        logger.exception("Could not persist queued job %s", job_id)
 
     logger.info(
         "Analysis queued job_id=%s source=%s path=%s stream=%s",
@@ -287,7 +265,6 @@ def queue_for_analysis(
     )
 
     return _safe_job_copy(job)
-
 
 # ============================================================
 # Job registry operations
@@ -301,45 +278,60 @@ def update_job(
     if not job_id:
         return None
 
+    previous_status = None
     with _lock:
-
         job = _jobs.get(job_id)
-
         if job is None:
-            return None
-
+            job = database.get_job(job_id)
+            if job is None:
+                return None
+            _jobs[job_id] = job
+        previous_status = job.get("status")
         job.update(fields)
         job["updated_at"] = _utc_now()
+        result = _safe_job_copy(job)
 
-        return _safe_job_copy(job)
+    try:
+        database.record_job(result)
+        new_status = result.get("status")
+        if new_status in {"completed", "failed"} and new_status != previous_status:
+            action = "ANALYSIS_COMPLETED" if new_status == "completed" else "ANALYSIS_FAILED"
+            database.record_audit(
+                result.get("user_id"), action, job_id=job_id,
+                resource_type="analysis", resource_id=job_id,
+                details={"original_name": result.get("original_name"), "status": new_status},
+            )
+    except Exception:
+        logger.exception("Could not persist job update %s", job_id)
+
+    return result
 
 
 def get_job(job_id: str) -> Optional[dict]:
-
     with _lock:
-
         job = _jobs.get(job_id)
-
-        if job is None:
-            return None
-
+        if job is not None:
+            return _safe_job_copy(job)
+    job = database.get_job(job_id)
+    if job is not None:
+        with _lock:
+            _jobs[job_id] = dict(job)
         return _safe_job_copy(job)
+    return None
 
 
 def list_jobs(limit: int = 50) -> List[dict]:
-
     with _lock:
-
-        jobs = sorted(
-            _jobs.values(),
-            key=lambda item: item["queued_at"],
-            reverse=True,
-        )
-
-        return [
-            _safe_job_copy(job)
-            for job in jobs[:limit]
-        ]
+        jobs = sorted(_jobs.values(), key=lambda item: item.get("queued_at") or "", reverse=True)
+    if len(jobs) < limit:
+        try:
+            persisted = database.list_jobs(limit=limit)
+            seen = {j.get("job_id") for j in jobs}
+            jobs.extend(j for j in persisted if j.get("job_id") not in seen)
+            jobs.sort(key=lambda item: item.get("queued_at") or "", reverse=True)
+        except Exception:
+            logger.exception("Could not load persisted jobs")
+    return [_safe_job_copy(job) for job in jobs[:limit]]
 
 
 # ============================================================
@@ -420,6 +412,7 @@ def start_file_analysis(job_id: str) -> dict:
         job["message"] = "Starting video analysis."
         job["updated_at"] = _utc_now()
         job["error"] = None
+        database.record_job(job)
 
         worker = threading.Thread(
             target=_file_analysis_worker,
@@ -450,6 +443,7 @@ def _file_analysis_worker(job_id: str) -> None:
 
     import frame_processor
 
+    print(f"[ANALYSIS] Worker started: {job_id}", flush=True)
     job = get_job(job_id)
 
     if job is None:
@@ -514,6 +508,7 @@ def _file_analysis_worker(job_id: str) -> None:
     try:
 
         cap = cv2.VideoCapture(local_path)
+        print(f"[ANALYSIS] Video opened: {cap.isOpened()}", flush=True)
 
         if not cap.isOpened():
             raise RuntimeError(
@@ -529,6 +524,8 @@ def _file_analysis_worker(job_id: str) -> None:
             if raw_total_frames > 0
             else None
         )
+
+        print(f"[ANALYSIS] Total frames: {total_frames}", flush=True)
 
         fps = float(
             cap.get(cv2.CAP_PROP_FPS) or 0.0
@@ -550,7 +547,7 @@ def _file_analysis_worker(job_id: str) -> None:
                 out_path, fourcc, write_fps, (width, height)
             )
             if writer.isOpened():
-                annotated_rel_url = f"/snapshots/{job_id}/annotated.mp4"
+                annotated_rel_url = f"/evidence/annotated/{job_id}"
             else:
                 writer = None
                 logger.warning(
@@ -574,12 +571,23 @@ def _file_analysis_worker(job_id: str) -> None:
             annotated_video_url=annotated_rel_url,
         )
 
+        print(f"[ANALYSIS] Starting frame loop: {source_label}", flush=True)
+
         while True:
 
             ok, frame = cap.read()
 
             if not ok or frame is None:
+                print("[ANALYSIS] No more frames. Video reading finished.", flush=True)
                 break
+
+            frames_processed += 1
+
+            if frames_processed == 1 or frames_processed % 10 == 0:
+                print(
+                    f"[ANALYSIS] Processing frame {frames_processed}/{total_frames}",
+                    flush=True,
+                )
 
             annotated, meta = processor.process_frame(
                 frame,
@@ -870,6 +878,20 @@ def _file_analysis_worker(job_id: str) -> None:
             "annotated_video_url": annotated_rel_url,
         }
 
+        if out_path and os.path.isfile(out_path):
+            try:
+                database.add_evidence(
+                    job_id, job.get("user_id"), "annotated_video", out_path,
+                    os.path.basename(out_path), database.hash_file(out_path)
+                )
+            except Exception:
+                logger.exception("Could not persist annotated video evidence for job_id=%s", job_id)
+
+        print(
+            f"[ANALYSIS] COMPLETE: {frames_processed} frames in {elapsed_seconds:.2f}s",
+            flush=True,
+        )
+
         update_job(
             job_id,
             status="completed",
@@ -891,6 +913,8 @@ def _file_analysis_worker(job_id: str) -> None:
         )
 
     except Exception as exc:
+        
+        print(f"[ANALYSIS] ERROR: {type(exc).__name__}: {exc}", flush=True)
 
         logger.exception(
             "File analysis failed job_id=%s",

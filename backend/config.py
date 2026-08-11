@@ -26,6 +26,13 @@ class Config:
     )
     DRIVE_SCOPES: tuple = ("https://www.googleapis.com/auth/drive.readonly",)
     SESSION_COOKIE_NAME: str = os.getenv("SESSION_COOKIE_NAME", "netra_session")
+    SESSION_COOKIE_SECURE: bool = os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true"
+    SESSION_TTL_SECONDS: int = int(os.getenv("SESSION_TTL_SECONDS", str(12 * 60 * 60)))
+    DATABASE_PATH: str = os.getenv("NETRA_DATABASE_PATH", os.path.join(BASE_DIR, "netra.db"))
+    ADMIN_USERNAME: str = os.getenv("NETRA_ADMIN_USERNAME", "admin")
+    ADMIN_PASSWORD: str = os.getenv("NETRA_ADMIN_PASSWORD", "ChangeMe_Admin_123!")
+    OPERATOR_USERNAME: str = os.getenv("NETRA_OPERATOR_USERNAME", "operator")
+    OPERATOR_PASSWORD: str = os.getenv("NETRA_OPERATOR_PASSWORD", "ChangeMe_Operator_123!")
 
     LOCAL_DRIVE_DOWNLOAD_DIR: str = os.getenv("LOCAL_DRIVE_DOWNLOAD_DIR", "./downloaded_videos/drive")
     LOCAL_UPLOAD_DIR: str = os.getenv("LOCAL_UPLOAD_DIR", "./downloaded_videos/uploads")
@@ -75,5 +82,3 @@ class Config:
                 f"{cls.GOOGLE_OAUTH_CLIENT_SECRETS_FILE}"
             )
         cls.ensure_storage_dirs()
-
-print("REDIRECT URI IN USE:", Config.GOOGLE_OAUTH_REDIRECT_URI)

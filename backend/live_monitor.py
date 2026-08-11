@@ -72,7 +72,7 @@ class LiveMonitor:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def connect(self, source: VideoSource) -> Dict[str, Any]:
+    def connect(self, source: VideoSource, user_id: Optional[int] = None) -> Dict[str, Any]:
         with self._lock:
             self._stop_loop_unlocked(join=True)
             self._release_source_unlocked()
@@ -110,7 +110,7 @@ class LiveMonitor:
                 source=analysis_pipeline.SOURCE_LIVE,
                 stream_url=source.label,
                 original_name=source.label,
-                extra={"source_kind": source.source_kind},
+                extra={"source_kind": source.source_kind, "user_id": user_id},
             )
             self._job_id = analysis.get("job_id")
             analysis_pipeline.update_job(

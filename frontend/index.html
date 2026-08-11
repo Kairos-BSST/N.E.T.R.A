@@ -1,336 +1,373 @@
 <!DOCTYPE html>
+
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
 <title>Signal Intake</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/css/styles.css?v=3">
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&amp;family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="/css/styles.css?v=10" rel="stylesheet"/>
 </head>
 <body>
-
-<div class="bg-dynamic">
-  <span class="blob-1"></span>
-  <span class="blob-2"></span>
-  <span class="blob-3"></span>
+<div class="login-screen" id="loginScreen">
+<div class="login-card">
+<div class="login-brand">NETRA</div>
+<div class="login-kicker">SECURE SURVEILLANCE CONSOLE</div>
+<h1>Sign in</h1>
+<p class="login-sub">Authenticate to access video analysis, reports and evidence.</p><p class="login-account-note">NETRA does not use public sign-up. Accounts are provisioned for authorized operators and administrators.</p>
+<form id="loginForm">
+<label class="field"><span>Username</span><input autocomplete="username" id="loginUsername" required=""/></label>
+<label class="field"><span>Password</span><input autocomplete="current-password" id="loginPassword" required="" type="password"/></label>
+<button class="btn btn-live login-submit" type="submit">SIGN IN</button>
+<p class="login-error" hidden="" id="loginError"></p>
+</form>
 </div>
-
-<div class="app">
-
-  <aside class="side-nav" id="sideNav" aria-label="Main">
-    <div class="side-nav-brand">
-      <div class="brand-mark side-mark">
-        <svg viewBox="0 0 24 24" fill="none" stroke="#3FE8D0" stroke-width="1.6"><path d="M2 12c2-4 5-6 10-6s8 2 10 6c-2 4-5 6-10 6s-8-2-10-6z"/><circle cx="12" cy="12" r="2.4"/></svg>
-      </div>
-      <div class="side-nav-title">NETRA</div>
-    </div>
-    <nav class="side-nav-menu">
-      <button type="button" class="side-nav-item active" data-view="history" id="navHistory" aria-current="page"
-        onclick="window.NetraApp && window.NetraApp.showView('history'); return false;">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5h16M4 12h16M4 19h10"/><circle cx="18" cy="19" r="2"/></svg>
-        <span>History</span>
-      </button>
-      <button type="button" class="side-nav-item" data-view="alert" id="navAlert"
-        onclick="window.NetraApp && window.NetraApp.showView('alert'); return false;">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3a6 6 0 016 6c0 4 2 5 2 5H4s2-1 2-5a6 6 0 016-6z"/><path d="M10 19a2 2 0 004 0"/></svg>
-        <span>Alert</span>
-        <span class="side-nav-badge" id="alertBadge" style="display:none;">0</span>
-      </button>
-    </nav>
-  </aside>
-
-  <div class="app-main">
-
-  <header>
-    <div class="brand">
-      <div class="brand-mark">
-        <svg viewBox="0 0 24 24" fill="none" stroke="#3FE8D0" stroke-width="1.6"><path d="M2 12c2-4 5-6 10-6s8 2 10 6c-2 4-5 6-10 6s-8-2-10-6z"/><circle cx="12" cy="12" r="2.4"/></svg>
-      </div>
-      <div>
-        <div class="brand-name">SIGNAL INTAKE</div>
-        <div class="brand-sub">VIDEO SOURCE CONSOLE</div>
-      </div>
-    </div>
-    <button class="back-btn" id="backBtn">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+</div>
+<div class="bg-dynamic">
+<span class="blob-1"></span>
+<span class="blob-2"></span>
+<span class="blob-3"></span>
+</div>
+<div class="app" hidden="" id="appShell">
+<aside aria-label="Main" class="side-nav" id="sideNav">
+<div class="side-nav-brand">
+<div class="brand-mark side-mark">
+<svg fill="none" stroke="#3FE8D0" stroke-width="1.6" viewbox="0 0 24 24"><path d="M2 12c2-4 5-6 10-6s8 2 10 6c-2 4-5 6-10 6s-8-2-10-6z"></path><circle cx="12" cy="12" r="2.4"></circle></svg>
+</div>
+<div class="side-nav-title">NETRA</div>
+</div>
+<nav class="side-nav-menu"><button class="side-nav-item operator-only" data-view="dashboard" id="navDashboard" type="button"><span>Dashboard</span></button><button class="side-nav-item operator-only" data-view="alert" id="navAlert" type="button"><span>Alerts</span></button><button class="side-nav-item operator-only" data-view="history" id="navHistory" type="button"><span>History</span></button><button class="side-nav-item admin-only" data-view="adminActivity" hidden="True" id="navAdminActivity" type="button"><span>Activity</span></button><button class="side-nav-item admin-only" data-view="adminScans" hidden="True" id="navAdminScans" type="button"><span>History</span></button><button class="side-nav-item admin-only" data-view="adminOperators" hidden="True" id="navAdminOperators" type="button"><span>Add Operator</span></button></nav>
+</aside>
+<div class="app-main">
+<header>
+<div class="brand">
+<div class="brand-mark">
+<svg fill="none" stroke="#3FE8D0" stroke-width="1.6" viewbox="0 0 24 24"><path d="M2 12c2-4 5-6 10-6s8 2 10 6c-2 4-5 6-10 6s-8-2-10-6z"></path><circle cx="12" cy="12" r="2.4"></circle></svg>
+</div>
+<div>
+<div class="brand-name">SIGNAL INTAKE</div>
+<div class="brand-sub">VIDEO SOURCE CONSOLE</div>
+</div>
+</div>
+<div class="header-user">
+<span id="currentUserLabel">—</span>
+<span class="role-chip" id="currentRoleLabel">—</span>
+<button class="btn btn-ghost logout-btn" id="logoutBtn" type="button">LOG OUT</button>
+</div>
+<button class="back-btn" id="backBtn">
+<svg fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24"><path d="M15 18l-6-6 6-6"></path></svg>
       BACK
     </button>
-  </header>
-
-  <div class="view-panel active" id="viewHistory" data-view-panel="history">
-
-  <section id="hub">
-    <h1 class="hub-title">Select where the video feed comes from. <span>The console adapts to whatever you pick.</span></h1>
-
-    <div class="cards">
-      <div class="card" data-source="live" tabindex="0">
-        <div class="card-index">SOURCE / 01</div>
-        <div class="card-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.6"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
-        </div>
-        <div class="card-title">Live CCTV</div>
-        <div class="card-desc">Connect Hikvision, Dahua, CP Plus, custom RTSP, or a local webcam — same AI pipeline.</div>
-        <div class="card-cta">CONNECT STREAM <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
-      </div>
-
-      <div class="card" data-source="upload" tabindex="0">
-        <div class="card-index">SOURCE / 02</div>
-        <div class="card-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.6"><path d="M12 16V4M6 10l6-6 6 6"/><path d="M4 18v1a2 2 0 002 2h12a2 2 0 002-2v-1"/></svg>
-        </div>
-        <div class="card-title">Upload Video</div>
-        <div class="card-desc">Send a video file straight from your device for analysis.</div>
-        <div class="card-cta">UPLOAD FILE <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
-      </div>
-
-      <div class="card" data-source="drive" tabindex="0">
-        <div class="card-index">SOURCE / 03</div>
-        <div class="card-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.6"><path d="M12 2l9 15H3L12 2z"/><path d="M8 13l-3 4h14l-3-4"/></svg>
-        </div>
-        <div class="card-title">Fetch from Drive</div>
-        <div class="card-desc">Authorize Drive access and pull a file directly by API.</div>
-        <div class="card-cta">CONNECT DRIVE <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
-      </div>
-    </div>
-  </section>
-
-  <section id="workspace">
-
-    <div class="ws-header">
-      <div class="ws-source-num" id="wsSourceNum">SOURCE / 01</div>
-      <h2 class="ws-source-name" id="wsSourceName">Live</h2>
-      <p class="ws-source-desc" id="wsSourceDesc">Connect to a live camera feed over an RTSP stream URL.</p>
-    </div>
-
-    <!-- LIVE CCTV panel -->
-    <div class="ws-grid" data-panel="live">
-      <div>
-        <div class="panel-label">CONNECTION METHOD</div>
-        <div class="live-methods" id="liveMethods" role="tablist">
-          <button type="button" class="live-method active" data-method="brand">Brand RTSP</button>
-          <button type="button" class="live-method" data-method="custom">Custom RTSP</button>
-          <button type="button" class="live-method" data-method="webcam">Local Webcam</button>
-        </div>
-
-        <div class="live-form" data-live-form="brand">
-          <label class="field">
-            <span>Brand</span>
-            <select id="cctvBrand">
-              <option value="hikvision">Hikvision (recommended path)</option>
-              <option value="dahua">Dahua</option>
-              <option value="cp_plus">CP Plus</option>
-            </select>
-          </label>
-          <div class="field-row">
-            <label class="field">
-              <span>IP Address</span>
-              <input type="text" id="cctvIp" placeholder="192.168.1.64" autocomplete="off" />
-            </label>
-            <label class="field field-narrow">
-              <span>Port</span>
-              <input type="number" id="cctvPort" value="554" min="1" max="65535" />
-            </label>
-          </div>
-          <div class="field-row">
-            <label class="field">
-              <span>Username</span>
-              <input type="text" id="cctvUser" placeholder="admin" autocomplete="username" />
-            </label>
-            <label class="field">
-              <span>Password</span>
-              <input type="password" id="cctvPass" placeholder="••••••••" autocomplete="current-password" />
-            </label>
-          </div>
-          <p class="url-preview" id="rtspPreview">RTSP URL will appear here</p>
-        </div>
-
-        <div class="live-form" data-live-form="custom" hidden>
-          <label class="field">
-            <span>Custom RTSP URL</span>
-            <input type="text" id="rtspInput" placeholder="rtsp://user:pass@192.168.1.20:554/stream1" />
-          </label>
-        </div>
-
-        <div class="live-form" data-live-form="webcam" hidden>
-          <p class="side-note">Uses <b>cv2.VideoCapture(0)</b> on the server and feeds the same AI pipeline as CCTV — ideal for local testing without a camera.</p>
-          <label class="field field-narrow">
-            <span>Device index</span>
-            <input type="number" id="webcamIndex" value="0" min="0" max="10" />
-          </label>
-        </div>
-
-        <div class="live-actions">
-          <button class="btn btn-live" id="liveConnectBtn" type="button">CONNECT</button>
-          <button class="btn btn-ghost" id="liveDisconnectBtn" type="button" disabled>DISCONNECT</button>
-          <button class="btn btn-live" id="liveStartBtn" type="button" disabled>START MONITORING</button>
-          <button class="btn btn-ghost" id="liveStopBtn" type="button" disabled>STOP MONITORING</button>
-        </div>
-
-        <div class="frame" id="liveFrame">
-          <div class="live-tag" id="liveTag">LIVE</div>
-          <img id="liveStreamImg" alt="Live processed feed" hidden />
-          <div class="frame-msg" id="liveMsg">NO SIGNAL — choose a method and connect</div>
-        </div>
-        <p class="live-error" id="liveError" hidden></p>
-      </div>
-      <div>
-        <div class="panel-label">LIVE STATUS</div>
-        <div class="meta-row"><span>Connection Status</span><span id="metaStatus">Disconnected</span></div>
-        <div class="meta-row"><span>Current Source</span><span id="metaSource">—</span></div>
-        <div class="meta-row"><span>Processing Status</span><span id="metaProcessing">Idle</span></div>
-        <div class="meta-row"><span>FPS</span><span id="metaFps">—</span></div>
-        <div class="meta-row"><span>Frame Count</span><span id="metaFrames">0</span></div>
-        <div class="meta-row"><span>Resolution</span><span id="metaRes">—</span></div>
-        <div class="meta-row"><span>Model</span><span id="metaModel">—</span></div>
-        <p class="side-note" style="margin-top:16px;">Frames from CCTV / webcam go through the shared <b>VideoSource → frame_processor</b> path used by upload and Drive — no duplicated AI code.</p>
-      </div>
-    </div>
-
-    <!-- UPLOAD panel markup -->
-    <div class="ws-grid" data-panel="upload" style="display:none;">
-      <div>
-        <div class="panel-label">UPLOAD VIDEO</div>
-        <div class="dropzone" id="dropzone">
-          <div class="dropzone-title">Drag and drop a video file</div>
-          <div class="dropzone-sub">or click to browse — any video format (MP4, MOV, AVI, MKV, WEBM, …)</div>
-          <input type="file" id="fileInput" accept="video/*,.mp4,.mov,.avi,.mkv,.webm,.flv,.wmv,.m4v,.mpeg,.mpg,.3gp,.ts,.mts,.m2ts,.ogv,.vob,.asf,.f4v,.mxf">
-        </div>
-        <div id="fileRow"></div>
-      </div>
-      <div>
-        <div class="panel-label">UPLOAD DETAILS</div>
-        <div class="meta-row"><span>File</span><span id="metaFile">—</span></div>
-        <div class="meta-row"><span>Size</span><span id="metaSize">—</span></div>
-        <div class="meta-row"><span>Status</span><span id="metaUploadStatus">Waiting</span></div>
-        <p class="side-note" style="margin-top:16px;">Files are saved on the Signal Intake backend via <b>POST /upload</b>, then handed to the shared model analysis placeholder.</p>
-      </div>
-    </div>
-
-    <!-- DRIVE panel markup -->
-    <div class="ws-grid" data-panel="drive" style="display:none;">
-      <div>
-        <div class="panel-label">GOOGLE DRIVE</div>
-        <div class="drive-connect" id="driveConnect">
-          <p>Authorize access to your Drive to browse and fetch video files by API.</p>
-          <button class="btn btn-drive" id="driveConnectBtn">CONNECT GOOGLE DRIVE</button>
-        </div>
-        <div class="drive-grid" id="driveGrid"></div>
-      </div>
-      <div>
-        <div class="panel-label">FETCH STATUS</div>
-        <div class="meta-row"><span>Account</span><span id="metaAccount">Not connected</span></div>
-        <div class="meta-row"><span>Selected file</span><span id="metaDriveFile">—</span></div>
-        <div class="meta-row"><span>Status</span><span id="metaDriveStatus">Idle</span></div>
-        <p class="side-note" style="margin-top:16px;">Live OAuth flow via Google Drive API (<b>files.list</b> / <b>files.get</b>). Fetched files are also pushed into the shared model analysis placeholder.</p>
-      </div>
-    </div>
-
-   <div class="analysis-panel" id="analysisPanel">
-      <div class="panel-label">MODEL ANALYSIS</div>
-
-      <div class="video-preview-block" id="videoPreviewBlock" style="display:none;">
-        <div class="video-preview-stage" id="videoPreviewStage">
-          <video id="analysisVideoPreview" controls playsinline></video>
-          <canvas id="analysisOverlay" class="video-overlay" aria-hidden="true"></canvas>
-        </div>
-        <div class="video-preview-hint">Click any event below to jump the player to that moment — detection boxes appear on the frame.</div>
-        <a id="annotatedVideoLink" class="annotated-video-link" href="#" target="_blank" rel="noopener" style="display:none;">Open annotated video (boxes drawn)</a>
-      </div>
-
-      <div class="analysis-status">
-        <div class="analysis-pill" id="analysisPill">
-          <span class="dot"></span>
-          <span id="analysisPillText">IDLE — waiting for input</span>
-        </div>
-        <p class="analysis-msg" id="analysisMsg">
+</header>
+<div class="view-panel active" data-view-panel="dashboard" id="viewDashboard">
+<section class="dashboard-page">
+<div class="ws-header">
+<div class="ws-source-num">OPS / DASHBOARD</div>
+<h2 class="ws-source-name">Operations dashboard</h2>
+<p class="ws-source-desc">Start a scan or review the analyses you have already completed.</p>
+</div>
+<div class="dashboard-grid">
+<div class="dashboard-stat"><span>MY SCANS</span><strong id="dashTotalScans">0</strong></div>
+<div class="dashboard-stat"><span>COMPLETED</span><strong id="dashCompletedScans">0</strong></div>
+<div class="dashboard-stat"><span>REPORTS DOWNLOADED</span><strong id="dashReportsDownloaded">0</strong></div>
+</div>
+<div class="dashboard-actions">
+<button class="btn btn-ghost" id="dashOpenHistory" type="button">VIEW HISTORY</button>
+</div>
+<section class="dashboard-source-section" id="hub">
+<div class="hub-title">Select where the video feed comes from. <span>The console adapts to whatever you pick.</span></div>
+<div class="cards">
+<div class="card" data-source="live" tabindex="0">
+<div class="card-index">SOURCE / 01</div>
+<div class="card-icon"><svg fill="none" stroke-width="1.6" viewbox="0 0 24 24"><path d="M23 7l-7 5 7 5V7z"></path><rect height="14" rx="2" width="15" x="1" y="5"></rect></svg></div>
+<div class="card-title">Live CCTV</div>
+<div class="card-desc">Connect Hikvision, Dahua, CP Plus, custom RTSP, or a local webcam.</div>
+<div class="card-cta">CONNECT STREAM <svg fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></div>
+</div>
+<div class="card" data-source="upload" tabindex="0">
+<div class="card-index">SOURCE / 02</div>
+<div class="card-icon"><svg fill="none" stroke-width="1.6" viewbox="0 0 24 24"><path d="M12 16V4M6 10l6-6 6 6"></path><path d="M4 18v1a2 2 0 002 2h12a2 2 0 002-2v-1"></path></svg></div>
+<div class="card-title">Upload Video</div>
+<div class="card-desc">Send a video file straight from your device for analysis.</div>
+<div class="card-cta">UPLOAD FILE <svg fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></div>
+</div>
+<div class="card" data-source="drive" tabindex="0">
+<div class="card-index">SOURCE / 03</div>
+<div class="card-icon"><svg fill="none" stroke-width="1.6" viewbox="0 0 24 24"><path d="M12 2l9 15H3L12 2z"></path><path d="M8 13l-3 4h14l-3-4"></path></svg></div>
+<div class="card-title">Fetch from Drive</div>
+<div class="card-desc">Authorize Drive access and pull a file directly by API.</div>
+<div class="card-cta">CONNECT DRIVE <svg fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></div>
+</div>
+</div>
+</section>
+</section>
+<section id="workspace">
+<div class="ws-header">
+<div class="ws-source-num" id="wsSourceNum">SOURCE / 01</div>
+<h2 class="ws-source-name" id="wsSourceName">Live</h2>
+<p class="ws-source-desc" id="wsSourceDesc">Connect to a live camera feed over an RTSP stream URL.</p>
+</div>
+<!-- LIVE CCTV panel -->
+<div class="ws-grid" data-panel="live">
+<div>
+<div class="panel-label">CONNECTION METHOD</div>
+<div class="live-methods" id="liveMethods" role="tablist">
+<button class="live-method active" data-method="brand" type="button">Brand RTSP</button>
+<button class="live-method" data-method="custom" type="button">Custom RTSP</button>
+<button class="live-method" data-method="webcam" type="button">Local Webcam</button>
+</div>
+<div class="live-form" data-live-form="brand">
+<label class="field">
+<span>Brand</span>
+<select id="cctvBrand">
+<option value="hikvision">Hikvision (recommended path)</option>
+<option value="dahua">Dahua</option>
+<option value="cp_plus">CP Plus</option>
+</select>
+</label>
+<div class="field-row">
+<label class="field">
+<span>IP Address</span>
+<input autocomplete="off" id="cctvIp" placeholder="192.168.1.64" type="text"/>
+</label>
+<label class="field field-narrow">
+<span>Port</span>
+<input id="cctvPort" max="65535" min="1" type="number" value="554"/>
+</label>
+</div>
+<div class="field-row">
+<label class="field">
+<span>Username</span>
+<input autocomplete="username" id="cctvUser" placeholder="admin" type="text"/>
+</label>
+<label class="field">
+<span>Password</span>
+<input autocomplete="current-password" id="cctvPass" placeholder="••••••••" type="password"/>
+</label>
+</div>
+<p class="url-preview" id="rtspPreview">RTSP URL will appear here</p>
+</div>
+<div class="live-form" data-live-form="custom" hidden="">
+<label class="field">
+<span>Custom RTSP URL</span>
+<input id="rtspInput" placeholder="rtsp://user:pass@192.168.1.20:554/stream1" type="text"/>
+</label>
+</div>
+<div class="live-form" data-live-form="webcam" hidden="">
+<p class="side-note">Uses <b>cv2.VideoCapture(0)</b> on the server and feeds the same AI pipeline as CCTV — ideal for local testing without a camera.</p>
+<label class="field field-narrow">
+<span>Device index</span>
+<input id="webcamIndex" max="10" min="0" type="number" value="0"/>
+</label>
+</div>
+<div class="live-actions">
+<button class="btn btn-live" id="liveConnectBtn" type="button">CONNECT</button>
+<button class="btn btn-ghost" disabled="" id="liveDisconnectBtn" type="button">DISCONNECT</button>
+<button class="btn btn-live" disabled="" id="liveStartBtn" type="button">START MONITORING</button>
+<button class="btn btn-ghost" disabled="" id="liveStopBtn" type="button">STOP MONITORING</button>
+</div>
+<div class="frame" id="liveFrame">
+<div class="live-tag" id="liveTag">LIVE</div>
+<img alt="Live processed feed" hidden="" id="liveStreamImg"/>
+<div class="frame-msg" id="liveMsg">NO SIGNAL — choose a method and connect</div>
+</div>
+<p class="live-error" hidden="" id="liveError"></p>
+</div>
+<div>
+<div class="panel-label">LIVE STATUS</div>
+<div class="meta-row"><span>Connection Status</span><span id="metaStatus">Disconnected</span></div>
+<div class="meta-row"><span>Current Source</span><span id="metaSource">—</span></div>
+<div class="meta-row"><span>Processing Status</span><span id="metaProcessing">Idle</span></div>
+<div class="meta-row"><span>FPS</span><span id="metaFps">—</span></div>
+<div class="meta-row"><span>Frame Count</span><span id="metaFrames">0</span></div>
+<div class="meta-row"><span>Resolution</span><span id="metaRes">—</span></div>
+<div class="meta-row"><span>Model</span><span id="metaModel">—</span></div>
+<p class="side-note" style="margin-top:16px;">Frames from CCTV / webcam go through the shared <b>VideoSource → frame_processor</b> path used by upload and Drive — no duplicated AI code.</p>
+</div>
+</div>
+<!-- UPLOAD panel markup -->
+<div class="ws-grid" data-panel="upload" style="display:none;">
+<div>
+<div class="panel-label">UPLOAD VIDEO</div>
+<div class="dropzone" id="dropzone">
+<div class="dropzone-title">Drag and drop a video file</div>
+<div class="dropzone-sub">or click to browse — any video format (MP4, MOV, AVI, MKV, WEBM, …)</div>
+<input accept="video/*,.mp4,.mov,.avi,.mkv,.webm,.flv,.wmv,.m4v,.mpeg,.mpg,.3gp,.ts,.mts,.m2ts,.ogv,.vob,.asf,.f4v,.mxf" id="fileInput" type="file"/>
+</div>
+<div id="fileRow"></div>
+</div>
+<div>
+<div class="panel-label">UPLOAD DETAILS</div>
+<div class="meta-row"><span>File</span><span id="metaFile">—</span></div>
+<div class="meta-row"><span>Size</span><span id="metaSize">—</span></div>
+<div class="meta-row"><span>Status</span><span id="metaUploadStatus">Waiting</span></div>
+<p class="side-note" style="margin-top:16px;">Files are saved on the Signal Intake backend via <b>POST /upload</b>, then handed to the shared model analysis placeholder.</p>
+</div>
+</div>
+<!-- DRIVE panel markup -->
+<div class="ws-grid" data-panel="drive" style="display:none;">
+<div>
+<div class="panel-label">GOOGLE DRIVE</div>
+<div class="drive-connect" id="driveConnect">
+<p>Authorize access to your Drive to browse and fetch video files by API.</p>
+<button class="btn btn-drive" id="driveConnectBtn">CONNECT GOOGLE DRIVE</button>
+</div>
+<div class="drive-grid" id="driveGrid"></div>
+</div>
+<div>
+<div class="panel-label">FETCH STATUS</div>
+<div class="meta-row"><span>Account</span><span id="metaAccount">Not connected</span></div>
+<div class="meta-row"><span>Selected file</span><span id="metaDriveFile">—</span></div>
+<div class="meta-row"><span>Status</span><span id="metaDriveStatus">Idle</span></div>
+<p class="side-note" style="margin-top:16px;">Live OAuth flow via Google Drive API (<b>files.list</b> / <b>files.get</b>). Fetched files are also pushed into the shared model analysis placeholder.</p>
+</div>
+</div>
+<div class="analysis-panel" id="analysisPanel">
+<div class="panel-label">MODEL ANALYSIS</div>
+<div class="video-preview-block" id="videoPreviewBlock" style="display:none;">
+<div class="video-preview-stage" id="videoPreviewStage">
+<video controls="" id="analysisVideoPreview" playsinline=""></video>
+<canvas aria-hidden="true" class="video-overlay" id="analysisOverlay"></canvas>
+</div>
+<div class="video-preview-hint">Click any event below to jump the player to that moment — detection boxes appear on the frame.</div>
+<a class="annotated-video-link" href="#" id="annotatedVideoLink" rel="noopener" style="display:none;" target="_blank">Open annotated video (boxes drawn)</a>
+</div>
+<div class="analysis-status">
+<div class="analysis-pill" id="analysisPill">
+<span class="dot"></span>
+<span id="analysisPillText">IDLE — waiting for input</span>
+</div>
+<p class="analysis-msg" id="analysisMsg">
           Every source (live CCTV, local upload, Drive) feeds the shared VideoSource → frame_processor path. Connect a live feed and start monitoring to see annotated frames here.
         </p>
-        <div class="analysis-meta" id="analysisMeta">job — · source —</div>
-      </div>
-
-      <div class="report-block">
-        <div class="panel-label">EVENT REPORT / TIMELINE</div>
-        <div class="report-summary" id="reportSummary"></div>
-        <p class="report-empty" id="reportEmpty">No events logged yet — click an event to open its evidence frame and jump the video.</p>
-        <div class="history-layout">
-          <div class="report-timeline" id="reportTimeline"></div>
-          <div class="alert-frame-col history-frame-col" id="historyFrameViewer">
-            <div class="panel-label">EVIDENCE FRAME</div>
-            <div class="alert-frame-empty" id="historyFrameEmpty">Select an event to view the detection frame.</div>
-            <div class="alert-frame-body" id="historyFrameBody" style="display:none;">
-              <img id="historyFrameImage" class="alert-frame-image" alt="Event evidence frame" />
-              <div class="alert-frame-meta" id="historyFrameMeta"></div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-    </div>
-
-  </section>
-  </div><!-- /viewHistory -->
-
-  <div class="view-panel" id="viewAlert" data-view-panel="alert" hidden>
-    <section class="alert-page">
-      <div class="ws-header">
-        <div class="ws-source-num">OPS / ALERTS</div>
-        <h2 class="ws-source-name">Detection frames</h2>
-        <p class="ws-source-desc">Click a frame card to enlarge it. These are the frames where weapon, plate, anomaly, or violence was detected.</p>
-      </div>
-
-      <div id="alertsPanel">
-        <div class="report-summary" id="alertsStatus"></div>
-        <div class="alert-frame-grid" id="alertsRecent"></div>
-
-        <div class="alert-frame-col alert-frame-lightbox" id="alertFrameViewer" style="display:none;">
-          <div class="panel-label">SELECTED FRAME</div>
-          <div class="alert-frame-empty" id="alertFrameEmpty" style="display:none;"></div>
-          <div class="alert-frame-body" id="alertFrameBody">
-            <img id="alertFrameImage" class="alert-frame-image" alt="Alert evidence frame" />
-            <div class="alert-frame-meta" id="alertFrameMeta"></div>
-            <div class="alert-frame-actions" id="alertFrameActions"></div>
-          </div>
-        </div>
-
-        <details class="alert-config-details" style="margin-top:28px;">
-          <summary class="panel-label" style="cursor:pointer;">WEBHOOK ROUTING</summary>
-          <p class="side-note">Rules + watchlists route detections to operators with snapshot/clip context.</p>
-
-          <label class="field" style="margin-top:12px;">
-            <span>Public base URL (for absolute snapshot/clip links)</span>
-            <input type="text" id="alertPublicBase" placeholder="http://127.0.0.1:8000" />
-          </label>
-
-          <div class="field-row" style="margin-top:10px; gap:10px; align-items:flex-end;">
-            <label class="field" style="flex:1;">
-              <span>Operator webhook URL</span>
-              <input type="url" id="alertWebhookUrl" placeholder="https://hooks.example.com/netra" />
-            </label>
-            <button type="button" class="btn" id="alertSaveWebhookBtn">SAVE WEBHOOK</button>
-            <button type="button" class="btn btn-ghost" id="alertTestWebhookBtn">TEST</button>
-          </div>
-
-          <label class="field" style="margin-top:12px;">
-            <span>Plate watchlist (comma or newline separated)</span>
-            <textarea id="alertWatchlistValues" rows="3" placeholder="KA02HN182, MH12AB1234"></textarea>
-          </label>
-          <button type="button" class="btn btn-ghost" id="alertSaveWatchlistBtn" style="margin-top:8px;">SAVE WATCHLIST</button>
-        </details>
-      </div>
-    </section>
-  </div><!-- /viewAlert -->
-
-  </div><!-- /app-main -->
+<div class="analysis-meta" id="analysisMeta">job — · source —</div>
+</div>
+<div class="report-block">
+<div class="panel-label">EVENT REPORT / TIMELINE</div>
+<div class="report-summary" id="reportSummary"></div>
+<p class="report-empty" id="reportEmpty">No events logged yet — click an event to open its evidence frame and jump the video.</p>
+<div class="history-layout">
+<div class="report-timeline" id="reportTimeline"></div>
+<div class="alert-frame-col history-frame-col" id="historyFrameViewer">
+<div class="panel-label">EVIDENCE FRAME</div>
+<div class="alert-frame-empty" id="historyFrameEmpty">Select an event to view the detection frame.</div>
+<div class="alert-frame-body" id="historyFrameBody" style="display:none;">
+<img alt="Event evidence frame" class="alert-frame-image" id="historyFrameImage"/>
+<div class="alert-frame-meta" id="historyFrameMeta"></div>
+</div>
+</div>
+</div>
+</div>
 </div>
 
-<script src="/js/analysis.js?v=3"></script>
-<script src="/js/alerts.js?v=4"></script>
-<script src="/js/live.js?v=3"></script>
-<script src="/js/upload.js?v=3"></script>
-<script src="/js/drive.js?v=3"></script>
-<script src="/js/app.js?v=3"></script>
+</section></div><div class="view-panel" data-view-panel="alert" hidden="True" id="viewAlert"><section class="current-scan-alerts alert-page" id="currentScanAlerts">
+<div class="ws-header">
+<div class="ws-source-num">CURRENT SCAN / ALERTS</div>
+<h3 class="ws-source-name">Detection frames</h3>
+<p class="ws-source-desc">Only detections from the active scan are shown here. Previous scans are never mixed into this view.</p>
+</div>
+<div class="report-summary" id="alertsStatus"></div>
+<div class="alert-frame-grid" id="alertsRecent"></div>
+<div class="alert-frame-col alert-frame-lightbox" id="alertFrameViewer" style="display:none;">
+<div class="panel-label">SELECTED FRAME</div>
+<div class="alert-frame-empty" id="alertFrameEmpty" style="display:none;"></div>
+<div class="alert-frame-body" id="alertFrameBody">
+<img alt="Current scan evidence frame" class="alert-frame-image" id="alertFrameImage"/>
+<div class="alert-frame-meta" id="alertFrameMeta"></div>
+<div class="alert-frame-actions" id="alertFrameActions"></div>
+</div>
+</div>
+</section></div>
+<div class="view-panel" data-view-panel="history" hidden="" id="viewHistory">
+<section class="history-page" id="historyPage">
+<div class="ws-header">
+<div class="ws-source-num" id="historyKicker">OPS / MY HISTORY</div>
+<h2 class="ws-source-name" id="historyTitle">Your analysis history</h2>
+<p class="ws-source-desc">Your previous scans, with search and filters.</p>
+</div>
+<div class="history-toolbar">
+<input id="historySearch" placeholder="Search video, job ID, source, plate or detection…"/>
+<select id="historySource"><option value="">All sources</option><option value="upload">Upload</option><option value="drive">Drive</option><option value="live">Live</option><option value="webcam">Webcam</option></select>
+<select id="historyStatus"><option value="">All status</option><option value="queued">Queued</option><option value="processing">Processing</option><option value="completed">Completed</option><option value="failed">Failed</option><option value="disconnected">Disconnected</option></select>
+<select id="historyEvent"><option value="">All detections</option><option value="weapon">Weapon</option><option value="plate">Plate</option><option value="anomaly">Anomaly</option><option value="violence">Violence</option></select>
+<input id="historyFrom" title="From date" type="date"/><input id="historyTo" title="To date" type="date"/>
+<button class="btn btn-live" id="historySearchBtn" type="button">SEARCH</button>
+<button class="btn btn-ghost" id="historyClearBtn" type="button">CLEAR</button>
+</div>
+<div class="history-table-wrap"><table class="history-table"><thead><tr><th>Video / Job</th><th>Source</th><th>Analysis</th><th>Report</th><th>Date / Time</th><th></th></tr></thead><tbody id="historyRows"></tbody></table></div>
+<div class="history-footer"><span id="historyCount">0 records</span><div><button class="btn btn-ghost" id="historyPrev">PREV</button><button class="btn btn-ghost" id="historyNext">NEXT</button></div></div>
+</section>
 
+</div><!-- /viewHistory -->
+<div class="view-panel" data-view-panel="adminActivity" hidden="" id="viewAdminActivity">
+<section class="history-page admin-page">
+<div class="ws-header">
+<div class="ws-source-num">ADMIN / ACTIVITY</div>
+<h2 class="ws-source-name">System activity</h2>
+<p class="ws-source-desc">See what every operator has done, with a concise operational audit trail.</p>
+</div>
+<div class="history-toolbar admin-toolbar">
+<input id="adminSearch" placeholder="Search operator, video, job ID or action…">
+<select id="adminUser"><option value="">All operators</option></select>
+<select id="adminAction"><option value="">All activity</option><option value="LOGIN">Login</option><option value="LOGOUT">Logout</option><option value="VIDEO_UPLOADED">Video upload</option><option value="DRIVE_FETCHED">Drive video</option><option value="CCTV_CONNECTED">CCTV connected</option><option value="ANALYSIS_QUEUED">Analysis started</option><option value="ANALYSIS_COMPLETED">Analysis completed</option><option value="ANALYSIS_FAILED">Analysis failed</option><option value="REPORT_DOWNLOADED">Report downloaded</option><option value="OPERATOR_CREATED">Operator created</option></select>
+<input id="adminFrom" type="date"/><input id="adminTo" type="date"/>
+<button class="btn btn-live" id="adminSearchBtn" type="button">SEARCH</button><button class="btn btn-ghost" id="adminClearBtn" type="button">CLEAR</button>
+</input></div>
+<div class="history-table-wrap"><table class="history-table audit-table"><thead><tr><th>Date / Time</th><th>User</th><th>Activity</th><th>Video / Job</th><th>Details</th></tr></thead><tbody id="adminRows"></tbody></table></div>
+<div class="history-footer"><span id="adminCount">0 records</span><div><button class="btn btn-ghost" id="adminPrev">PREV</button><button class="btn btn-ghost" id="adminNext">NEXT</button></div></div>
+</section>
+</div>
+<div class="view-panel" data-view-panel="adminScans" hidden="" id="viewAdminScans">
+<section class="history-page admin-page">
+<div class="ws-header">
+<div class="ws-source-num">ADMIN / HISTORY</div>
+<h2 class="ws-source-name">Report history</h2>
+<p class="ws-source-desc">Find a specific scan and download its generated PDF report.</p>
+</div>
+<div class="history-toolbar admin-toolbar">
+<input id="adminScanSearch" placeholder="Search video, job ID, operator or source…"/>
+<select id="adminScanSource"><option value="">All sources</option><option value="upload">Video upload</option><option value="drive">Google Drive</option><option value="live">CCTV</option><option value="webcam">Webcam</option></select>
+<select id="adminScanStatus"><option value="">All status</option><option value="queued">Queued</option><option value="processing">Processing</option><option value="completed">Completed</option><option value="failed">Failed</option><option value="disconnected">Disconnected</option></select>
+<input id="adminScanFrom" type="date"/><input id="adminScanTo" type="date"/>
+<button class="btn btn-live" id="adminScanSearchBtn" type="button">SEARCH</button><button class="btn btn-ghost" id="adminScanClearBtn" type="button">CLEAR</button>
+</div>
+<div class="history-table-wrap"><table class="history-table"><thead><tr><th>Video / Job</th><th>Operator</th><th>Source</th><th>Analysis</th><th>Date / Time</th><th></th></tr></thead><tbody id="adminScanRows"></tbody></table></div>
+<div class="history-footer"><span id="adminScanCount">0 records</span><div><button class="btn btn-ghost" id="adminScanPrev">PREV</button><button class="btn btn-ghost" id="adminScanNext">NEXT</button></div></div>
+</section>
+</div>
+<div class="view-panel" data-view-panel="adminOperators" hidden="" id="viewAdminOperators">
+<section class="history-page admin-page operator-admin-page">
+<div class="ws-header">
+<div class="ws-source-num">ADMIN / OPERATORS</div>
+<h2 class="ws-source-name">Add operator</h2>
+<p class="ws-source-desc">Create authorized operator accounts. Roles are assigned by the administrator and cannot be selected on the sign-in page.</p>
+</div>
+<form class="operator-form" id="addOperatorForm">
+<div class="field-row">
+<label class="field"><span>Username</span><input autocomplete="off" id="operatorUsername" minlength="3" required=""/></label>
+<label class="field"><span>Password</span><input autocomplete="new-password" id="operatorPassword" minlength="8" required="" type="password"/></label>
+</div>
+<div class="field-row">
+<label class="field"><span>Role</span><input disabled="" value="Operator"/></label>
+</div>
+<button class="btn btn-live" type="submit">ADD OPERATOR</button>
+<p class="login-error" hidden="" id="operatorFormError"></p>
+<p class="operator-form-success" hidden="" id="operatorFormSuccess"></p>
+</form>
+<div class="panel-label" style="margin-top:34px;">CURRENT OPERATORS</div>
+<div class="history-table-wrap" style="margin-top:10px;"><table class="history-table"><thead><tr><th>Username</th><th>Status</th><th>Created</th></tr></thead><tbody id="operatorRows"></tbody></table></div>
+</section>
+</div>
+</div><!-- /app-main -->
+</div>
+<script src="/js/analysis.js?v=10"></script>
+<script src="/js/alerts.js?v=10"></script>
+<script src="/js/live.js?v=10"></script>
+<script src="/js/upload.js?v=10"></script>
+<script src="/js/drive.js?v=10"></script>
+<script src="/js/history.js?v=10"></script>
+<script src="/js/app.js?v=10"></script>
+<script src="/js/auth.js?v=10"></script>
 </body>
 </html>
