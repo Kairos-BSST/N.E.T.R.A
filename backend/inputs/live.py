@@ -15,11 +15,13 @@ import logging
 import time
 from typing import Literal, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from live_monitor import monitor
+from auth import current_user
+import database
 from video_sources import (
     BRAND_CP_PLUS,
     BRAND_CUSTOM,
@@ -110,7 +112,7 @@ def _build_source(req: LiveConnectRequest):
 
 
 @router.post("/live/build-url")
-def build_url(req: BuildUrlRequest):
+def build_url(req: BuildUrlRequest, user=Depends(current_user)):
     """Preview the RTSP URL for a brand form without connecting."""
     try:
         url = build_rtsp_url(
@@ -133,11 +135,11 @@ def build_url(req: BuildUrlRequest):
 
 
 @router.post("/live/connect")
-def live_connect(req: LiveConnectRequest):
+def live_connect(req: LiveConnectRequest, user=Depends(current_user)):
     """Open RTSP or webcam via VideoSource.connect() and verify first frame."""
     try:
         source = _build_source(req)
-        status = monitor.connect(source)
+        status = monitor.connect(source, user_id=user["id"])
     except VideoSourceError as exc:
         logger.warning("Live connect failed: %s", exc)
         raise _http_error_from_source(exc) from exc
@@ -145,17 +147,22 @@ def live_connect(req: LiveConnectRequest):
         logger.exception("Unexpected live connect error")
         raise HTTPException(status_code=500, detail={"message": str(exc), "code": "source_error"}) from exc
 
+    database.record_audit(
+        user["id"], "CCTV_CONNECTED", job_id=status.get("job_id"),
+        resource_type="live_source", resource_id=status.get("job_id"),
+        details={"source": status.get("current_source"), "method": req.method, "brand": req.brand},
+    )
     return {"status": "connected", "live": status}
 
 
 @router.post("/live/disconnect")
-def live_disconnect():
+def live_disconnect(user=Depends(current_user)):
     status = monitor.disconnect()
     return {"status": "disconnected", "live": status}
 
 
 @router.post("/live/start")
-def live_start():
+def live_start(user=Depends(current_user)):
     """Start continuous read → shared AI process_frame → dashboard stream."""
     try:
         status = monitor.start_monitoring()
@@ -165,18 +172,18 @@ def live_start():
 
 
 @router.post("/live/stop")
-def live_stop():
+def live_stop(user=Depends(current_user)):
     status = monitor.stop_monitoring(join=True)
     return {"status": "stopped", "live": status}
 
 
 @router.get("/live/status")
-def live_status():
+def live_status(user=Depends(current_user)):
     return monitor.status()
 
 
 @router.get("/live/frame")
-def live_frame():
+def live_frame(user=Depends(current_user)):
     """Latest JPEG snapshot — polled by the dashboard for reliable live video."""
     jpeg = monitor.get_jpeg()
     if not jpeg:
@@ -192,7 +199,7 @@ def live_frame():
 
 
 @router.get("/live/stream")
-def live_stream():
+def live_stream(user=Depends(current_user)):
     """
     MJPEG stream of the latest frame (updates as the capture loop runs).
     Prefer /live/frame polling in the browser for broader compatibility.
@@ -234,7 +241,7 @@ class LiveAnalyzeRequest(BaseModel):
 
 
 @router.post("/analysis/live")
-def queue_live_analysis(req: LiveAnalyzeRequest):
+def queue_live_analysis(req: LiveAnalyzeRequest, user=Depends(current_user)):
     """Legacy queue-only endpoint — prefer /live/connect + /live/start."""
     import analysis_pipeline
 
@@ -245,5 +252,6 @@ def queue_live_analysis(req: LiveAnalyzeRequest):
         source=analysis_pipeline.SOURCE_LIVE,
         stream_url=url,
         original_name=url,
+        extra={"user_id": user["id"]},
     )
     return {"status": "queued", "analysis": analysis}

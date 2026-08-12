@@ -1,20 +1,5 @@
-"""
-api.py
-------
-N.E.T.R.A Signal Intake API.
-
-Serves the frontend/ folder and mounts one router per input type:
-    inputs/live.py    — live / CCTV / RTSP
-    inputs/upload.py  — local video upload
-    inputs/drive.py   — Google Drive OAuth + fetch
-    inputs/analysis.py — shared model-analysis placeholder
-
-Run from the backend/ directory:
-    python -m uvicorn api:app --reload --port 8000
-
-Then open:
-    http://127.0.0.1:8000/
-"""
+"""N.E.T.R.A Signal Intake API."""
+from __future__ import annotations
 
 import logging
 import os
@@ -24,10 +9,13 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from config import Config
+import database
 from inputs import analysis as analysis_input
+from inputs import alerts as alerts_input
 from inputs import drive as drive_input
 from inputs import live as live_input
 from inputs import upload as upload_input
+from auth import router as auth_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("netra.api")
@@ -37,18 +25,20 @@ FRONTEND_DIR = os.path.abspath(os.path.join(BACKEND_DIR, "..", "frontend"))
 
 app = FastAPI(
     title="N.E.T.R.A Signal Intake API",
-    description="Backend for Signal Intake — live CCTV/webcam, upload, Drive, shared AI frame pipeline.",
-    version="1.3.0",
+    description="Backend for Signal Intake — live CCTV/webcam, upload, Drive, shared AI frame pipeline and alerting.",
+    version="1.5.0",
 )
 
 Config.ensure_storage_dirs()
+database.init_db()
 
 app.include_router(live_input.router)
 app.include_router(upload_input.router)
 app.include_router(drive_input.router)
 app.include_router(analysis_input.router)
+app.include_router(alerts_input.router)
+app.include_router(auth_router)
 
-# Static assets from ../frontend (css/, js/)
 if os.path.isdir(FRONTEND_DIR):
     css_dir = os.path.join(FRONTEND_DIR, "css")
     js_dir = os.path.join(FRONTEND_DIR, "js")

@@ -1,4 +1,4 @@
-# --- Secrets / credentials (NEVER commit these) ---
+# --- Secrets / credentials ---
 .env
 .env.*
 !.env.example
@@ -37,6 +37,7 @@ fetch_state.json
 *.part
 # Local Drive / upload storage (backend/downloaded_videos/)
 downloaded_videos/
+analysis_snapshots/
 
 # Video media (matches Config.ALLOWED_VIDEO_EXTENSIONS; keep .ts out — MPEG-TS
 *.mp4
@@ -72,3 +73,11 @@ downloaded_videos/
 Thumbs.db
 .vscode/
 .idea/
+
+# NETRA local auth/database and secrets
+backend/netra.db
+backend/netra.db-shm
+backend/netra.db-wal
+backend/.env
+backend/env
+.env

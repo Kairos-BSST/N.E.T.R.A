@@ -14,16 +14,42 @@ load_dotenv()
 
 
 class Config:
-    GOOGLE_OAUTH_CLIENT_SECRETS_FILE: str = os.getenv("GOOGLE_OAUTH_CLIENT_SECRETS_FILE", "")
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))       # .../N.E.T.R.A/backend
+    PROJECT_ROOT = os.path.dirname(BASE_DIR)                     # .../N.E.T.R.A
+
+    GOOGLE_OAUTH_CLIENT_SECRETS_FILE: str = os.getenv(
+    "GOOGLE_OAUTH_CLIENT_SECRETS_FILE",
+    os.path.join(PROJECT_ROOT, "cloud_integration", "google_oauth_client_secret.json")
+)
     GOOGLE_OAUTH_REDIRECT_URI: str = os.getenv(
         "GOOGLE_OAUTH_REDIRECT_URI", "http://localhost:8000/auth/google/callback"
     )
     DRIVE_SCOPES: tuple = ("https://www.googleapis.com/auth/drive.readonly",)
     SESSION_COOKIE_NAME: str = os.getenv("SESSION_COOKIE_NAME", "netra_session")
+    SESSION_COOKIE_SECURE: bool = os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true"
+    SESSION_TTL_SECONDS: int = int(os.getenv("SESSION_TTL_SECONDS", str(12 * 60 * 60)))
+    DATABASE_PATH: str = os.getenv("NETRA_DATABASE_PATH", os.path.join(BASE_DIR, "netra.db"))
+    ADMIN_USERNAME: str = os.getenv("NETRA_ADMIN_USERNAME", "admin")
+    ADMIN_PASSWORD: str = os.getenv("NETRA_ADMIN_PASSWORD", "ChangeMe_Admin_123!")
+    OPERATOR_USERNAME: str = os.getenv("NETRA_OPERATOR_USERNAME", "operator")
+    OPERATOR_PASSWORD: str = os.getenv("NETRA_OPERATOR_PASSWORD", "ChangeMe_Operator_123!")
 
     LOCAL_DRIVE_DOWNLOAD_DIR: str = os.getenv("LOCAL_DRIVE_DOWNLOAD_DIR", "./downloaded_videos/drive")
     LOCAL_UPLOAD_DIR: str = os.getenv("LOCAL_UPLOAD_DIR", "./downloaded_videos/uploads")
     STATE_FILE_PATH: str = os.getenv("STATE_FILE_PATH", "./fetch_state.json")
+
+    # Where per-event evidence thumbnails (snapshots) are written. Served
+    # back to the frontend/report via the /snapshots static mount.
+    SNAPSHOT_DIR: str = os.getenv("SNAPSHOT_DIR", "./analysis_snapshots")
+
+    # Absolute base URL embedded in webhook alert payloads so operators
+    # can open snapshot/clip links from Slack/Teams/etc.
+    PUBLIC_BASE_URL: str = os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:8000")
+
+    # Minimum gap (seconds of video time) between two logged events of the
+    # SAME type on the SAME job. Prevents one long detection from spamming
+    # a new report row on every processed frame.
+    EVENT_DEDUP_SECONDS: float = float(os.getenv("EVENT_DEDUP_SECONDS", "2.0"))
 
     # Max upload size in bytes (default 2 GB). Override with MAX_UPLOAD_BYTES.
     MAX_UPLOAD_BYTES: int = int(os.getenv("MAX_UPLOAD_BYTES", str(2 * 1024 * 1024 * 1024)))
@@ -39,6 +65,7 @@ class Config:
     def ensure_storage_dirs(cls) -> None:
         os.makedirs(cls.LOCAL_DRIVE_DOWNLOAD_DIR, exist_ok=True)
         os.makedirs(cls.LOCAL_UPLOAD_DIR, exist_ok=True)
+        os.makedirs(cls.SNAPSHOT_DIR, exist_ok=True)
 
     @classmethod
     def validate_drive(cls) -> None:
@@ -55,5 +82,3 @@ class Config:
                 f"{cls.GOOGLE_OAUTH_CLIENT_SECRETS_FILE}"
             )
         cls.ensure_storage_dirs()
-
-print("REDIRECT URI IN USE:", Config.GOOGLE_OAUTH_REDIRECT_URI)

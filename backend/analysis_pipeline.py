@@ -12,7 +12,6 @@ inference entry point.
 
 This keeps all AI inference paths centralized.
 """
-
 from __future__ import annotations
 
 import logging
@@ -25,6 +24,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
+
+from config import Config
+import database
+from webhook_client import send_event_webhook
+
+# alerting is imported lazily inside add_event to avoid circular imports
+# during module load; see emit path below.
 
 logger = logging.getLogger("netra.analysis")
 
@@ -65,7 +71,129 @@ def _safe_job_copy(job: dict) -> dict:
     """
     return dict(job)
 
+def format_video_timestamp(seconds: float) -> str:
+    """
+    Convert a video-relative offset (seconds) into HH:MM:SS.mmm for
+    display in the report / timeline.
+    """
+    if seconds is None or seconds < 0:
+        seconds = 0.0
+    total_ms = int(round(seconds * 1000))
+    hours, rem_ms = divmod(total_ms, 3_600_000)
+    minutes, rem_ms = divmod(rem_ms, 60_000)
+    secs, ms = divmod(rem_ms, 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}.{ms:03d}"
 
+
+def _describe_location(
+    bbox: Optional[List[int]],
+    frame_w: int,
+    frame_h: int,
+    source_label: str,
+) -> str:
+    """
+    Human-readable location for a report row.
+
+    For detections with a bounding box (weapon / plate), this describes
+    WHERE in the frame it was seen (a 3x3 grid: top/middle/bottom x
+    left/center/right). For frame-level events (anomaly / violence, which
+    have no bounding box) it falls back to just the camera / source name,
+    since there is no specific region to point to.
+    """
+
+    if not bbox or frame_w <= 0 or frame_h <= 0:
+        return f"Camera: {source_label}"
+
+    x1, y1, x2, y2 = bbox
+    cx = (x1 + x2) / 2.0
+    cy = (y1 + y2) / 2.0
+
+    col = "left" if cx < frame_w / 3 else ("center" if cx < 2 * frame_w / 3 else "right")
+    row = "top" if cy < frame_h / 3 else ("middle" if cy < 2 * frame_h / 3 else "bottom")
+
+    return f"Camera: {source_label} — {row}-{col} of frame"
+
+
+def _snapshot_dir_for_job(job_id: str) -> str:
+    path = os.path.join(Config.SNAPSHOT_DIR, job_id)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _save_snapshot(
+    job_id: str,
+    event_id: str,
+    frame: np.ndarray,
+    detections: Optional[List[Dict[str, Any]]] = None,
+) -> Optional[str]:
+    """
+    Persist a JPEG evidence thumbnail for one detected event.
+    Draws bounding boxes when detections are provided so the report
+    shows WHERE the plate/weapon was, not just a bare frame.
+    Returns a web-servable relative URL (mounted at /snapshots by api.py),
+    or None if the snapshot could not be written.
+    """
+    try:
+        import frame_processor
+
+        out_frame = frame
+        if detections:
+            out_frame = frame_processor.draw_detections_on_frame(
+                frame, detections
+            )
+
+        out_dir = _snapshot_dir_for_job(job_id)
+        filename = f"{event_id}.jpg"
+        full_path = os.path.join(out_dir, filename)
+        ok = cv2.imwrite(full_path, out_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+        if not ok:
+            return None
+        try:
+            job = get_job(job_id)
+            database.add_evidence(
+                job_id, (job or {}).get("user_id"), "snapshot", full_path, filename, database.hash_file(full_path)
+            )
+        except Exception:
+            logger.exception("Could not persist snapshot evidence for job_id=%s", job_id)
+        return f"/evidence/snapshots/{job_id}/{filename}"
+    except Exception:
+        logger.exception("Failed to save snapshot for job_id=%s event_id=%s", job_id, event_id)
+        return None
+
+
+def _annotated_video_path(job_id: str) -> str:
+    return os.path.join(_snapshot_dir_for_job(job_id), "annotated.mp4")
+
+
+def add_event(job_id: str, event: Dict[str, Any]) -> None:
+    """
+    Append one detection event to a job's live event log (used to build
+    the searchable report / timeline). Kept separate from `result` so the
+    frontend can poll and render events while analysis is still running.
+
+    Immediately hands the event to the Sub-5s alerting pipeline
+    (rules / watchlists / webhook routing with snapshot+clip context).
+    """
+    job_copy = None
+    with _lock:
+        job = _jobs.get(job_id)
+        if job is None:
+            return
+        events = job.setdefault("events", [])
+        events.append(event)
+        job_copy = dict(job)
+
+    try:
+        database.add_event(job_id, event)
+    except Exception:
+        logger.exception("Could not persist event for job_id=%s", job_id)
+
+    try:
+        import alerting
+        alerting.emit_from_event(job_id, event, job=job_copy)
+    except Exception:
+        logger.exception("Alert pipeline failed for job_id=%s — falling back to legacy webhook", job_id)
+        send_event_webhook(job_id, event)
 # ============================================================
 # Job creation
 # ============================================================
@@ -93,6 +221,7 @@ def queue_for_analysis(
 
     job = {
         "job_id": job_id,
+        "user_id": (extra or {}).get("user_id"),
         "source": source,
         "local_path": local_path,
         "stream_url": stream_url,
@@ -109,10 +238,23 @@ def queue_for_analysis(
         "result": None,
         "error": None,
         "extra": extra or {},
+        # Chronological, timestamped detection log — the raw material for
+        # the searchable report / evidence review screen.
+        "events": [],
     }
 
     with _lock:
         _jobs[job_id] = job
+
+    try:
+        database.record_job(job)
+        database.record_audit(
+            job.get("user_id"), "ANALYSIS_QUEUED", job_id=job_id,
+            resource_type="analysis", resource_id=job_id,
+            details={"source": source, "original_name": original_name or "—"},
+        )
+    except Exception:
+        logger.exception("Could not persist queued job %s", job_id)
 
     logger.info(
         "Analysis queued job_id=%s source=%s path=%s stream=%s",
@@ -123,7 +265,6 @@ def queue_for_analysis(
     )
 
     return _safe_job_copy(job)
-
 
 # ============================================================
 # Job registry operations
@@ -137,50 +278,72 @@ def update_job(
     if not job_id:
         return None
 
+    previous_status = None
     with _lock:
-
         job = _jobs.get(job_id)
-
         if job is None:
-            return None
-
+            job = database.get_job(job_id)
+            if job is None:
+                return None
+            _jobs[job_id] = job
+        previous_status = job.get("status")
         job.update(fields)
         job["updated_at"] = _utc_now()
+        result = _safe_job_copy(job)
 
-        return _safe_job_copy(job)
+    try:
+        database.record_job(result)
+        new_status = result.get("status")
+        if new_status in {"completed", "failed"} and new_status != previous_status:
+            action = "ANALYSIS_COMPLETED" if new_status == "completed" else "ANALYSIS_FAILED"
+            database.record_audit(
+                result.get("user_id"), action, job_id=job_id,
+                resource_type="analysis", resource_id=job_id,
+                details={"original_name": result.get("original_name"), "status": new_status},
+            )
+    except Exception:
+        logger.exception("Could not persist job update %s", job_id)
+
+    return result
 
 
 def get_job(job_id: str) -> Optional[dict]:
-
     with _lock:
-
         job = _jobs.get(job_id)
-
-        if job is None:
-            return None
-
+        if job is not None:
+            return _safe_job_copy(job)
+    job = database.get_job(job_id)
+    if job is not None:
+        with _lock:
+            _jobs[job_id] = dict(job)
         return _safe_job_copy(job)
+    return None
 
 
 def list_jobs(limit: int = 50) -> List[dict]:
-
     with _lock:
-
-        jobs = sorted(
-            _jobs.values(),
-            key=lambda item: item["queued_at"],
-            reverse=True,
-        )
-
-        return [
-            _safe_job_copy(job)
-            for job in jobs[:limit]
-        ]
+        jobs = sorted(_jobs.values(), key=lambda item: item.get("queued_at") or "", reverse=True)
+    if len(jobs) < limit:
+        try:
+            persisted = database.list_jobs(limit=limit)
+            seen = {j.get("job_id") for j in jobs}
+            jobs.extend(j for j in persisted if j.get("job_id") not in seen)
+            jobs.sort(key=lambda item: item.get("queued_at") or "", reverse=True)
+        except Exception:
+            logger.exception("Could not load persisted jobs")
+    return [_safe_job_copy(job) for job in jobs[:limit]]
 
 
 # ============================================================
 # Shared AI entry point
 # ============================================================
+#
+# NOTE: this module-level process_frame() (backed by frame_processor's
+# single shared default instance) is kept only for any external/legacy
+# caller. _file_analysis_worker below does NOT use it -- each job creates
+# its own frame_processor.FrameProcessor() instance so concurrent uploads
+# don't corrupt each other's frame counters/detections/violence buffers.
+# See frame_processor.py's FrameProcessor docstring for why that mattered.
 
 def process_frame(
     frame: np.ndarray,
@@ -189,11 +352,9 @@ def process_frame(
     draw: bool = True,
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
     """
-    Shared AI entry point.
-
-    All file-based analysis goes through this function.
-
-    Live monitoring uses the same underlying frame_processor module.
+    Shared AI entry point (single default stream). Prefer creating your
+    own frame_processor.FrameProcessor() instance for anything that may
+    run concurrently with other streams.
     """
 
     import frame_processor
@@ -251,6 +412,7 @@ def start_file_analysis(job_id: str) -> dict:
         job["message"] = "Starting video analysis."
         job["updated_at"] = _utc_now()
         job["error"] = None
+        database.record_job(job)
 
         worker = threading.Thread(
             target=_file_analysis_worker,
@@ -270,10 +432,18 @@ def _file_analysis_worker(job_id: str) -> None:
     """
     Worker executed in a daemon thread.
 
-    Opens the video, feeds frames through the shared AI pipeline and
-    stores a compact summary in the analysis job.
+    Opens the video, feeds frames through a PER-JOB AI pipeline instance
+    and stores a compact summary in the analysis job.
+
+    Each job gets its own frame_processor.FrameProcessor() so that
+    multiple uploads analyzed at the same time (each already runs in its
+    own thread -- see start_file_analysis) don't share frame counters,
+    detection state, or the violence frame buffer with each other.
     """
 
+    import frame_processor
+
+    print(f"[ANALYSIS] Worker started: {job_id}", flush=True)
     job = get_job(job_id)
 
     if job is None:
@@ -314,10 +484,31 @@ def _file_analysis_worker(job_id: str) -> None:
     max_violence_confidence = 0.0
 
     last_meta: Dict[str, Any] = {}
+    plates_seen: Dict[str, Dict[str, Any]] = {}
+    last_plate_key: Optional[str] = None
+
+    # Whether each event type is CURRENTLY being detected. An event is
+    # only logged on the False -> True transition (i.e. when something
+    # NEW starts happening), not on every frame it continues to be true.
+    # This keeps the report to one row per real occurrence instead of
+    # one row every couple of seconds.
+    active_state: Dict[str, bool] = {
+        "weapon": False,
+        "plate": False,
+        "anomaly": False,
+        "violence": False,
+    }
+
+    # Per-job AI pipeline instance -- see docstring above.
+    processor = frame_processor.FrameProcessor(label=source_label)
+
+    writer: Optional[cv2.VideoWriter] = None
+    annotated_rel_url: Optional[str] = None
 
     try:
 
         cap = cv2.VideoCapture(local_path)
+        print(f"[ANALYSIS] Video opened: {cap.isOpened()}", flush=True)
 
         if not cap.isOpened():
             raise RuntimeError(
@@ -334,6 +525,8 @@ def _file_analysis_worker(job_id: str) -> None:
             else None
         )
 
+        print(f"[ANALYSIS] Total frames: {total_frames}", flush=True)
+
         fps = float(
             cap.get(cv2.CAP_PROP_FPS) or 0.0
         )
@@ -345,6 +538,22 @@ def _file_analysis_worker(job_id: str) -> None:
         height = int(
             cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0
         )
+
+        out_path = _annotated_video_path(job_id)
+        write_fps = fps if fps > 1e-3 else 20.0
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        if width > 0 and height > 0:
+            writer = cv2.VideoWriter(
+                out_path, fourcc, write_fps, (width, height)
+            )
+            if writer.isOpened():
+                annotated_rel_url = f"/evidence/annotated/{job_id}"
+            else:
+                writer = None
+                logger.warning(
+                    "Could not open annotated VideoWriter for job_id=%s",
+                    job_id,
+                )
 
         update_job(
             job_id,
@@ -359,20 +568,35 @@ def _file_analysis_worker(job_id: str) -> None:
                 "height": height,
                 "total_frames": total_frames,
             },
+            annotated_video_url=annotated_rel_url,
         )
+
+        print(f"[ANALYSIS] Starting frame loop: {source_label}", flush=True)
 
         while True:
 
             ok, frame = cap.read()
 
             if not ok or frame is None:
+                print("[ANALYSIS] No more frames. Video reading finished.", flush=True)
                 break
 
-            _, meta = process_frame(
+            frames_processed += 1
+
+            if frames_processed == 1 or frames_processed % 10 == 0:
+                print(
+                    f"[ANALYSIS] Processing frame {frames_processed}/{total_frames}",
+                    flush=True,
+                )
+
+            annotated, meta = processor.process_frame(
                 frame,
                 source_label=source_label,
-                draw=False,
+                draw=True,
             )
+
+            if writer is not None:
+                writer.write(annotated)
 
             frames_processed += 1
             last_meta = meta
@@ -458,7 +682,121 @@ def _file_analysis_worker(job_id: str) -> None:
                 max_violence_confidence,
                 confidence,
             )
+# ------------------------------------------------
+            # Timestamped event log (report / timeline / evidence)
+            # ------------------------------------------------
 
+            video_time = (
+                (frames_processed - 1) / fps
+                if fps > 0
+                else float(frames_processed - 1)
+            )
+
+            def _log_event(event_type, label, confidence_val, extra_fields=None, snap_dets=None):
+                event_id = uuid.uuid4().hex[:12]
+                snapshot_url = _save_snapshot(
+                    job_id, event_id, frame, detections=snap_dets
+                )
+                event = {
+                    "event_id": event_id,
+                    "type": event_type,
+                    "label": label,
+                    "confidence": round(float(confidence_val), 4),
+                    "frame_number": frames_processed,
+                    "video_time_seconds": round(video_time, 3),
+                    "video_timestamp": format_video_timestamp(video_time),
+                    "wall_clock_time": _utc_now(),
+                    "snapshot_url": snapshot_url,
+                }
+                if extra_fields:
+                    event.update(extra_fields)
+                add_event(job_id, event)
+
+            frame_h, frame_w = frame.shape[:2]
+
+            weapon_dets = meta.get("weapon_detections", [])
+            weapon_now = bool(weapon_dets)
+            if weapon_now and not active_state["weapon"]:
+                top = max(weapon_dets, key=lambda d: d.get("confidence", 0.0))
+                bbox = top.get("bbox")
+                _log_event(
+                    "weapon", top.get("label", "weapon"), top.get("confidence", 0.0),
+                    {
+                        "detections_in_frame": len(weapon_dets),
+                        "bbox": bbox,
+                        "location": _describe_location(bbox, frame_w, frame_h, source_label),
+                    },
+                    snap_dets=weapon_dets,
+                )
+            active_state["weapon"] = weapon_now
+
+            ocr_dets = meta.get("ocr_detections", [])
+            plate_now = bool(ocr_dets)
+            if plate_now:
+                top = max(ocr_dets, key=lambda d: d.get("confidence", 0.0))
+                plate_text = (
+                    top.get("plate_number")
+                    or top.get("text")
+                    or top.get("label")
+                    or "PLATE"
+                )
+                plate_key = str(plate_text).strip().upper()
+                should_log_plate = (
+                    (not active_state["plate"])
+                    or (plate_key != last_plate_key)
+                )
+                if should_log_plate:
+                    bbox = top.get("bbox")
+                    _log_event(
+                        "plate",
+                        plate_text,
+                        top.get("confidence", 0.0),
+                        {
+                            "detections_in_frame": len(ocr_dets),
+                            "bbox": bbox,
+                            "plate_number": top.get("plate_number"),
+                            "ocr_confidence": top.get("ocr_confidence"),
+                            "location": _describe_location(
+                                bbox, frame_w, frame_h, source_label
+                            ),
+                        },
+                        snap_dets=ocr_dets,
+                    )
+                    if top.get("plate_number"):
+                        plates_seen[plate_key] = {
+                            "plate_number": top.get("plate_number"),
+                            "confidence": round(
+                                float(top.get("confidence", 0.0)), 4
+                            ),
+                            "ocr_confidence": top.get("ocr_confidence"),
+                            "bbox": top.get("bbox"),
+                            "frame_number": frames_processed,
+                            "video_time_seconds": round(video_time, 3),
+                        }
+                    last_plate_key = plate_key
+            else:
+                last_plate_key = None
+            active_state["plate"] = plate_now
+
+            anomaly_now = bool(anomaly.get("detected"))
+            if anomaly_now and not active_state["anomaly"]:
+                _log_event(
+                    "anomaly", "Anomalous activity", 0.0,
+                    {
+                        "reconstruction_error": round(anomaly_error, 6),
+                        "threshold": anomaly.get("threshold"),
+                        "location": _describe_location(None, frame_w, frame_h, source_label),
+                    },
+                )
+            active_state["anomaly"] = anomaly_now
+
+            violence_now = prediction == "FIGHT"
+            if violence_now and not active_state["violence"]:
+                _log_event(
+                    "violence", "Fight / violent activity", confidence,
+                    {"location": _describe_location(None, frame_w, frame_h, source_label)},
+                )
+            active_state["violence"] = violence_now
             # ------------------------------------------------
             # Progress update
             # ------------------------------------------------
@@ -510,6 +848,7 @@ def _file_analysis_worker(job_id: str) -> None:
                 "Video opened but no frames could be read."
             )
 
+        ocr_meta = (last_meta or {}).get("ocr") or {}
         result = {
             "frames_processed": frames_processed,
             "total_detections": total_detections,
@@ -532,8 +871,26 @@ def _file_analysis_worker(job_id: str) -> None:
             "model_status": last_meta.get(
                 "model_status"
             ),
-            "ocr_text_recognition": False,
+            "ocr_text_recognition": bool(
+                ocr_meta.get("text_recognition")
+            ),
+            "plates_found": list(plates_seen.values()),
+            "annotated_video_url": annotated_rel_url,
         }
+
+        if out_path and os.path.isfile(out_path):
+            try:
+                database.add_evidence(
+                    job_id, job.get("user_id"), "annotated_video", out_path,
+                    os.path.basename(out_path), database.hash_file(out_path)
+                )
+            except Exception:
+                logger.exception("Could not persist annotated video evidence for job_id=%s", job_id)
+
+        print(
+            f"[ANALYSIS] COMPLETE: {frames_processed} frames in {elapsed_seconds:.2f}s",
+            flush=True,
+        )
 
         update_job(
             job_id,
@@ -543,17 +900,21 @@ def _file_analysis_worker(job_id: str) -> None:
             frames_processed=frames_processed,
             completed_at=_utc_now(),
             result=result,
+            annotated_video_url=annotated_rel_url,
             error=None,
         )
 
         logger.info(
-            "Analysis completed job_id=%s frames=%s seconds=%.2f",
+            "Analysis completed job_id=%s frames=%s seconds=%.2f plates=%s",
             job_id,
             frames_processed,
             elapsed_seconds,
+            len(plates_seen),
         )
 
     except Exception as exc:
+        
+        print(f"[ANALYSIS] ERROR: {type(exc).__name__}: {exc}", flush=True)
 
         logger.exception(
             "File analysis failed job_id=%s",
@@ -571,6 +932,14 @@ def _file_analysis_worker(job_id: str) -> None:
 
     finally:
 
+        if writer is not None:
+            try:
+                writer.release()
+            except Exception:
+                logger.exception(
+                    "Failed to release annotated video writer"
+                )
+
         if cap is not None:
             try:
                 cap.release()
@@ -584,7 +953,6 @@ def _file_analysis_worker(job_id: str) -> None:
                 job_id,
                 None,
             )
-
 
 # ============================================================
 # Worker information
