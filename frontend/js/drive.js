@@ -80,7 +80,7 @@ window.NetraDrive = {
 
         btn.textContent = 'FETCHED ✓';
         metaDriveStatus.textContent = data.analysis ? 'Fetched + queued for analysis' : 'Fetched';
-        if (data.analysis) window.NetraAnalysis.setState(data.analysis);
+        if (data.analysis) window.NetraAnalysis.startPolling(data.analysis);
       } catch (err) {
         btn.disabled = false;
         btn.classList.remove('fetching');
