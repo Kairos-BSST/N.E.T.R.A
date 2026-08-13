@@ -45,6 +45,22 @@ SOURCE_LIVE = "live"
 SOURCE_WEBCAM = "webcam"
 
 
+def _get_analysis_fps(source_fps: float) -> float:
+    """Return the effective AI analysis FPS for a video.
+
+    Videos are still read frame-by-frame so seeking does not introduce
+    codec/keyframe issues, but only selected frames are sent to the
+    expensive AI models. If the source is already slower than the target,
+    every frame is analyzed.
+    """
+    configured = float(getattr(Config, "VIDEO_ANALYSIS_FPS", 8.0) or 8.0)
+    if configured <= 0:
+        configured = 8.0
+    if source_fps <= 0:
+        return configured
+    return min(source_fps, configured)
+
+
 # ============================================================
 # Job registry
 # ============================================================
@@ -499,7 +515,29 @@ def _file_analysis_worker(job_id: str) -> None:
         "violence": False,
     }
 
-    # Per-job AI pipeline instance -- see docstring above.
+    # Models are preloaded once by the API startup thread. A video can be
+    # uploaded immediately, but its worker waits here if model initialization
+    # is still running. This keeps uploads responsive without loading a
+    # second copy of every model for the job.
+    if not frame_processor.models_ready():
+        update_job(
+            job_id,
+            status="starting",
+            message=(
+                "Video uploaded successfully. AI models are initializing "
+                "in the background; analysis will begin automatically when ready."
+            ),
+            updated_at=_utc_now(),
+        )
+        print(
+            "[ANALYSIS] Waiting for background AI model initialization...",
+            flush=True,
+        )
+        frame_processor.wait_for_models()
+        print("[ANALYSIS] Background AI models are ready.", flush=True)
+
+    # Per-job AI pipeline instance -- state is isolated per video, while the
+    # underlying models are shared singletons loaded once at startup.
     processor = frame_processor.FrameProcessor(label=source_label)
 
     writer: Optional[cv2.VideoWriter] = None
@@ -555,6 +593,11 @@ def _file_analysis_worker(job_id: str) -> None:
                     job_id,
                 )
 
+        analysis_fps = _get_analysis_fps(fps)
+        sample_interval = 1.0 / analysis_fps if analysis_fps > 0 else 0.0
+        next_analysis_time = 0.0
+        source_frame_number = 0
+
         update_job(
             job_id,
             status="processing",
@@ -564,6 +607,7 @@ def _file_analysis_worker(job_id: str) -> None:
             progress=0.0,
             video_info={
                 "fps": round(fps, 3),
+                "analysis_fps": round(analysis_fps, 3),
                 "width": width,
                 "height": height,
                 "total_frames": total_frames,
@@ -581,11 +625,35 @@ def _file_analysis_worker(job_id: str) -> None:
                 print("[ANALYSIS] No more frames. Video reading finished.", flush=True)
                 break
 
+            source_frame_number += 1
+            source_video_time = (
+                (source_frame_number - 1) / fps
+                if fps > 0
+                else 0.0
+            )
+
+            # Only selected frames go through the expensive AI models.
+            # Example: a 60 FPS video with NETRA_ANALYSIS_FPS=8 sends
+            # roughly 8 frames/sec to process_frame() instead of 60.
+            should_analyze = (
+                analysis_fps <= 0
+                or source_video_time + 1e-9 >= next_analysis_time
+            )
+
+            if not should_analyze:
+                # Keep the annotated video at its original FPS, but do not
+                # pretend that a skipped frame was analyzed.
+                if writer is not None:
+                    writer.write(frame)
+                continue
+
+            next_analysis_time += sample_interval
             frames_processed += 1
 
             if frames_processed == 1 or frames_processed % 10 == 0:
                 print(
-                    f"[ANALYSIS] Processing frame {frames_processed}/{total_frames}",
+                    f"[ANALYSIS] AI frame {frames_processed}"
+                    f" (source frame {source_frame_number}/{total_frames})",
                     flush=True,
                 )
 
@@ -598,7 +666,6 @@ def _file_analysis_worker(job_id: str) -> None:
             if writer is not None:
                 writer.write(annotated)
 
-            frames_processed += 1
             last_meta = meta
 
             # ------------------------------------------------
@@ -686,11 +753,7 @@ def _file_analysis_worker(job_id: str) -> None:
             # Timestamped event log (report / timeline / evidence)
             # ------------------------------------------------
 
-            video_time = (
-                (frames_processed - 1) / fps
-                if fps > 0
-                else float(frames_processed - 1)
-            )
+            video_time = source_video_time
 
             def _log_event(event_type, label, confidence_val, extra_fields=None, snap_dets=None):
                 event_id = uuid.uuid4().hex[:12]
@@ -702,7 +765,8 @@ def _file_analysis_worker(job_id: str) -> None:
                     "type": event_type,
                     "label": label,
                     "confidence": round(float(confidence_val), 4),
-                    "frame_number": frames_processed,
+                    "frame_number": source_frame_number,
+                    "analysis_frame_number": frames_processed,
                     "video_time_seconds": round(video_time, 3),
                     "video_timestamp": format_video_timestamp(video_time),
                     "wall_clock_time": _utc_now(),
@@ -770,7 +834,8 @@ def _file_analysis_worker(job_id: str) -> None:
                             ),
                             "ocr_confidence": top.get("ocr_confidence"),
                             "bbox": top.get("bbox"),
-                            "frame_number": frames_processed,
+                            "frame_number": source_frame_number,
+                            "analysis_frame_number": frames_processed,
                             "video_time_seconds": round(video_time, 3),
                         }
                     last_plate_key = plate_key
@@ -805,7 +870,7 @@ def _file_analysis_worker(job_id: str) -> None:
                 progress = min(
                     100.0,
                     (
-                        frames_processed
+                        source_frame_number
                         / total_frames
                     )
                     * 100.0,
@@ -828,10 +893,9 @@ def _file_analysis_worker(job_id: str) -> None:
                         2,
                     ),
                     message=(
-                        f"Processing frame "
-                        f"{frames_processed}"
+                        f"Analyzing {frames_processed} sampled frames"
                         + (
-                            f"/{total_frames}"
+                            f" (video frame {source_frame_number}/{total_frames})"
                             if total_frames
                             else ""
                         )
@@ -851,6 +915,8 @@ def _file_analysis_worker(job_id: str) -> None:
         ocr_meta = (last_meta or {}).get("ocr") or {}
         result = {
             "frames_processed": frames_processed,
+            "source_frames_read": source_frame_number,
+            "analysis_fps": round(analysis_fps, 3),
             "total_detections": total_detections,
             "weapon_detections": weapon_detections,
             "plate_detections": plate_detections,
@@ -888,7 +954,8 @@ def _file_analysis_worker(job_id: str) -> None:
                 logger.exception("Could not persist annotated video evidence for job_id=%s", job_id)
 
         print(
-            f"[ANALYSIS] COMPLETE: {frames_processed} frames in {elapsed_seconds:.2f}s",
+            f"[ANALYSIS] COMPLETE: {frames_processed} AI frames"
+            f" sampled from {source_frame_number} source frames in {elapsed_seconds:.2f}s",
             flush=True,
         )
 

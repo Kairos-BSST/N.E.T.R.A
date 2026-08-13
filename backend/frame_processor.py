@@ -160,6 +160,78 @@ _model_status: Dict[str, str] = {
 
 _model_errors: Dict[str, str] = {}
 
+# Set once the background startup preload has attempted every enabled model.
+# Uploads are accepted while this is False; analysis workers wait on this
+# event before entering the frame loop.
+_models_ready = threading.Event()
+_models_preload_started = False
+
+
+def preload_models() -> Dict[str, str]:
+    """Load every enabled AI model once in the background.
+
+    This function is intended to be called from a daemon startup thread. It
+    deliberately loads models sequentially to avoid a large CPU/RAM spike.
+    A failed optional model is recorded in ``_model_errors`` but does not
+    prevent the remaining models from loading. The ready event is set only
+    after all enabled models have been attempted.
+    """
+    global _models_preload_started
+
+    with _lock:
+        if _models_preload_started:
+            return dict(_model_status)
+        _models_preload_started = True
+
+    logger.info("[STARTUP] Background AI model loading started on CPU.")
+
+    loaders = [
+        ("weapon", ENABLE_WEAPON, _load_weapon_model),
+        ("ocr", ENABLE_OCR, _load_ocr_model),
+        ("anomaly", ENABLE_ANOMALY, _load_anomaly_model),
+        ("violence", ENABLE_VIOLENCE, _load_violence_model),
+        ("crowd", ENABLE_CROWD, _load_crowd_model),
+    ]
+
+    try:
+        for name, enabled, loader in loaders:
+            if not enabled:
+                _model_status[name] = "disabled"
+                if name == "ocr":
+                    _model_status["ocr_recognition"] = "disabled"
+                logger.info("[STARTUP] %s model disabled by configuration.", name)
+                continue
+
+            logger.info("[STARTUP] Loading %s model...", name)
+            try:
+                loader()
+            except Exception:
+                # Individual loaders already capture their own errors, but
+                # keep the startup sequence alive if one ever leaks.
+                logger.exception("[STARTUP] Unexpected error loading %s model", name)
+
+        loaded = [k for k, v in _model_status.items() if v == "loaded"]
+        failed = [k for k, v in _model_status.items() if v == "failed"]
+        logger.info(
+            "[STARTUP] AI model initialization finished. loaded=%s failed=%s",
+            loaded,
+            failed,
+        )
+    finally:
+        _models_ready.set()
+
+    return dict(_model_status)
+
+
+def wait_for_models(timeout: float | None = None) -> bool:
+    """Wait until the background model preload has finished attempting loads."""
+    return _models_ready.wait(timeout=timeout)
+
+
+def models_ready() -> bool:
+    """Return True when startup model loading has finished."""
+    return _models_ready.is_set()
+
 
 # ============================================================
 # Paths
@@ -2012,3 +2084,4 @@ def process_frame(
 
 def get_stats() -> Dict[str, Any]:
     return _default_processor.get_stats()
+    

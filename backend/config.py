@@ -51,6 +51,13 @@ class Config:
     # a new report row on every processed frame.
     EVENT_DEDUP_SECONDS: float = float(os.getenv("EVENT_DEDUP_SECONDS", "2.0"))
 
+    # Maximum number of video frames per second that are sent through the
+    # expensive AI inference pipeline for uploaded videos. A 60 FPS video
+    # will therefore be analyzed at 8 FPS by default, while the original
+    # video is still read and its timestamps remain accurate.
+    VIDEO_ANALYSIS_FPS: float = float(os.getenv("NETRA_ANALYSIS_FPS", "8"))
+
+
     # Max upload size in bytes (default 2 GB). Override with MAX_UPLOAD_BYTES.
     MAX_UPLOAD_BYTES: int = int(os.getenv("MAX_UPLOAD_BYTES", str(2 * 1024 * 1024 * 1024)))
 

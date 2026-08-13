@@ -79,7 +79,7 @@ def get_analysis_report(job_id: str, user=Depends(current_user)):
 @router.get("/analysis/jobs/{job_id}/report/download")
 def download_analysis_report(job_id: str, user=Depends(current_user)):
     job = _authorized_job(job_id, user)
-    pdf_path = report_pdf.build_report_pdf(job, owner_user_id=user["id"])
+    pdf_path = report_pdf.build_report_pdf(job)
     database.record_audit(user["id"], "REPORT_DOWNLOADED", job_id=job_id, resource_type="report", resource_id=job_id, details={"sha256": database.hash_file(pdf_path)})
     safe_name = (job.get("original_name") or job_id).rsplit(".", 1)[0]
     return FileResponse(pdf_path, media_type="application/pdf", filename=f"NETRA_report_{safe_name}.pdf")

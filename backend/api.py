@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -16,6 +17,7 @@ from inputs import drive as drive_input
 from inputs import live as live_input
 from inputs import upload as upload_input
 from auth import router as auth_router
+import frame_processor
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("netra.api")
@@ -46,6 +48,22 @@ if os.path.isdir(FRONTEND_DIR):
         app.mount("/css", StaticFiles(directory=css_dir), name="css")
     if os.path.isdir(js_dir):
         app.mount("/js", StaticFiles(directory=js_dir), name="js")
+
+
+@app.on_event("startup")
+async def preload_ai_models_in_background():
+    """Start AI model initialization without blocking the API server.
+
+    The API remains available immediately, so users can upload videos while
+    the models are loading. Analysis workers wait for this background preload
+    to finish before running inference.
+    """
+    logger.info("[STARTUP] Starting background AI model initialization...")
+    threading.Thread(
+        target=frame_processor.preload_models,
+        name="netra-model-preloader",
+        daemon=True,
+    ).start()
 
 
 @app.get("/")
