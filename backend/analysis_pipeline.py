@@ -615,6 +615,12 @@ def _file_analysis_worker(job_id: str) -> None:
             annotated_video_url=annotated_rel_url,
         )
 
+        try:
+            import frame_processor
+            print(f"[ANALYSIS] Model status: {frame_processor.model_status()}", flush=True)
+        except Exception:
+            logger.exception("Could not print AI model status")
+
         print(f"[ANALYSIS] Starting frame loop: {source_label}", flush=True)
 
         while True:
@@ -632,25 +638,16 @@ def _file_analysis_worker(job_id: str) -> None:
                 else 0.0
             )
 
-            # Only selected frames go through the expensive AI models.
-            # Example: a 60 FPS video with NETRA_ANALYSIS_FPS=8 sends
-            # roughly 8 frames/sec to process_frame() instead of 60.
-            should_analyze = (
-                analysis_fps <= 0
-                or source_video_time + 1e-9 >= next_analysis_time
-            )
-
-            if not should_analyze:
-                # Keep the annotated video at its original FPS, but do not
-                # pretend that a skipped frame was analyzed.
-                if writer is not None:
-                    writer.write(frame)
-                continue
-
-            next_analysis_time += sample_interval
+            # Feed every source frame to FrameProcessor. The processor itself
+            # throttles weapon/OCR/anomaly/crowd inference, while violence
+            # deliberately samples every 2nd source frame just like the
+            # standalone training/validation script. Previously the outer
+            # analysis_fps sampler discarded frames before the violence model
+            # could ever see them, changing its temporal input from ~16 frames
+            # to a much longer, sparse clip.
             frames_processed += 1
 
-            if frames_processed == 1 or frames_processed % 10 == 0:
+            if frames_processed == 1 or frames_processed % 15 == 0:
                 print(
                     f"[ANALYSIS] AI frame {frames_processed}"
                     f" (source frame {source_frame_number}/{total_frames})",
@@ -882,7 +879,7 @@ def _file_analysis_worker(job_id: str) -> None:
             # unnecessary lock traffic, so update periodically.
             if (
                 frames_processed == 1
-                or frames_processed % 10 == 0
+                or frames_processed % 5 == 0
             ):
 
                 update_job(

@@ -65,17 +65,17 @@ ENABLE_CROWD = _env_bool("ENABLE_CROWD", True)
 # Crowd-density alert: raise an alert when the estimated number of people
 # in a frame reaches this threshold. LWCC/DM-Count is CPU-based.
 CROWD_THRESHOLD = int(os.getenv("CROWD_THRESHOLD", "40"))
-CROWD_INTERVAL = int(os.getenv("CROWD_INTERVAL", "15"))
+CROWD_INTERVAL = int(os.getenv("CROWD_INTERVAL", "60"))
 
 # A raw hit must survive this many consecutive inference checks before it
 # is treated as a real detection. One-frame YOLO flukes (car panel =
 # pistol) die here.
-DETECT_CONFIRM_HITS = int(os.getenv("DETECT_CONFIRM_HITS", "3"))
+DETECT_CONFIRM_HITS = int(os.getenv("DETECT_CONFIRM_HITS", "1"))
 DETECT_CLEAR_MISSES = int(os.getenv("DETECT_CLEAR_MISSES", "2"))
 BOX_MATCH_IOU = float(os.getenv("BOX_MATCH_IOU", "0.30"))
 
 # Weapon geometry: real weapons are small-to-medium, not half the frame.
-WEAPON_CONFIDENCE = float(os.getenv("WEAPON_CONFIDENCE", "0.65"))
+WEAPON_CONFIDENCE = float(os.getenv("WEAPON_CONFIDENCE", "0.50"))
 WEAPON_MIN_AREA_FRAC = float(os.getenv("WEAPON_MIN_AREA_FRAC", "0.0008"))
 WEAPON_MAX_AREA_FRAC = float(os.getenv("WEAPON_MAX_AREA_FRAC", "0.12"))
 WEAPON_MIN_ASPECT = float(os.getenv("WEAPON_MIN_ASPECT", "0.20"))
@@ -91,26 +91,27 @@ OCR_MIN_REC_SCORE = float(os.getenv("OCR_MIN_REC_SCORE", "0.55"))
 # raise it a little for noisy cameras, but is CAPPED so a fight/anomaly
 # clip that is "weird" from frame 1 cannot calibrate the bar above itself.
 ANOMALY_THRESHOLD = float(os.getenv("ANOMALY_THRESHOLD", "0.01"))
-ANOMALY_WARMUP_FRAMES = int(os.getenv("ANOMALY_WARMUP_FRAMES", "20"))
+ANOMALY_WARMUP_FRAMES = int(os.getenv("ANOMALY_WARMUP_FRAMES", "0"))
 ANOMALY_STD_MULT = float(os.getenv("ANOMALY_STD_MULT", "2.5"))
 ANOMALY_MAX_THRESHOLD = float(os.getenv("ANOMALY_MAX_THRESHOLD", "0.05"))
-ANOMALY_CONFIRM_HITS = int(os.getenv("ANOMALY_CONFIRM_HITS", "2"))
+ANOMALY_CONFIRM_HITS = int(os.getenv("ANOMALY_CONFIRM_HITS", "1"))
 
-WEAPON_INTERVAL = 3
-OCR_INTERVAL = 3
-ANOMALY_INTERVAL = 3
+WEAPON_INTERVAL = int(os.getenv("WEAPON_INTERVAL", "6"))
+OCR_INTERVAL = int(os.getenv("OCR_INTERVAL", "6"))
+ANOMALY_INTERVAL = int(os.getenv("ANOMALY_INTERVAL", "1"))
 
 FRAME_DIFF_THRESHOLD = float(os.getenv("FRAME_DIFF_THRESHOLD", "0.03"))
 
 VIOLENCE_SEQUENCE_LENGTH = 16
 VIOLENCE_SAMPLE_INTERVAL = 2
-VIOLENCE_RETAIN_FRAMES = 8
+VIOLENCE_RETAIN_FRAMES = int(os.getenv("VIOLENCE_RETAIN_FRAMES", "8"))
+VIOLENCE_INFERENCE_INTERVAL = int(os.getenv("VIOLENCE_INFERENCE_INTERVAL", "16"))
 # Real fight clips score ~0.97+; car false-fights cluster ~0.85. 0.90
 # keeps true fights while cutting most road-scene false positives.
 # Confirm=2 requires two consecutive FIGHT decisions (matches training
 # clip cadence better than a single noisy hit).
-VIOLENCE_MIN_CONFIDENCE = float(os.getenv("VIOLENCE_MIN_CONFIDENCE", "0.90"))
-VIOLENCE_CONFIRM_HITS = int(os.getenv("VIOLENCE_CONFIRM_HITS", "2"))
+VIOLENCE_MIN_CONFIDENCE = float(os.getenv("VIOLENCE_MIN_CONFIDENCE", "0.00"))
+VIOLENCE_CONFIRM_HITS = int(os.getenv("VIOLENCE_CONFIRM_HITS", "1"))
 
 
 # ============================================================
@@ -247,11 +248,43 @@ def _repo_root() -> str:
 
 
 def _model_path(filename: str) -> str:
-    return os.path.join(
-        _repo_root(),
-        "models",
-        filename,
-    )
+    """Return the first real checkpoint, skipping Git-LFS pointer files."""
+    root = os.path.join(_repo_root(), "models")
+    candidates = {
+        "weapon.pt": ["weapon.pt", "best.pt"],
+        "violence.pth": ["violence.pth", "best.pth", "violence_best.pth"],
+        "anomaly.pth": ["anomaly.pth", "best_anomaly.pth", "anomaly_best.pth", "best.pth"],
+    }.get(filename, [filename])
+    pointer = None
+    for name in candidates:
+        path = os.path.join(root, name)
+        if not os.path.isfile(path):
+            continue
+        try:
+            if os.path.getsize(path) < 1024:
+                with open(path, "rb") as f:
+                    head = f.read(256)
+                if b"git-lfs.github.com/spec" in head or b"oid sha256:" in head:
+                    pointer = pointer or path
+                    continue
+            return path
+        except OSError:
+            continue
+    return pointer or os.path.join(root, candidates[0])
+
+def _ensure_real_checkpoint(path: str) -> None:
+    """Reject Git-LFS pointer text instead of treating it as a model."""
+    if not os.path.isfile(path):
+        raise FileNotFoundError(path)
+    size = os.path.getsize(path)
+    if size < 1024:
+        with open(path, "rb") as f:
+            head = f.read(256)
+        if b"git-lfs.github.com/spec" in head or b"oid sha256:" in head:
+            raise RuntimeError(
+                f"{path} is a Git-LFS pointer, not the actual model weights. "
+                "Run 'git lfs pull' and verify the file size."
+            )
 
 
 # ============================================================
@@ -418,9 +451,7 @@ def _load_weapon_model() -> bool:
         from ultralytics import YOLO
 
         path = _model_path("weapon.pt")
-
-        if not os.path.isfile(path):
-            raise FileNotFoundError(path)
+        _ensure_real_checkpoint(path)
 
         _weapon_model = YOLO(path)
 
@@ -576,9 +607,7 @@ def _load_anomaly_model() -> bool:
         torch = _get_torch()
 
         path = _model_path("anomaly.pth")
-
-        if not os.path.isfile(path):
-            raise FileNotFoundError(path)
+        _ensure_real_checkpoint(path)
 
         checkpoint = torch.load(
             path,
@@ -654,9 +683,7 @@ def _load_violence_model() -> bool:
         import albumentations as A
 
         path = _model_path("violence.pth")
-
-        if not os.path.isfile(path):
-            raise FileNotFoundError(path)
+        _ensure_real_checkpoint(path)
 
         model = (
             torchvision.models.video.mc3_18(
@@ -669,12 +696,18 @@ def _load_violence_model() -> bool:
             2,
         )
 
-        state_dict = torch.load(
-            path,
-            map_location=DEVICE,
-        )
-
-        model.load_state_dict(state_dict)
+        checkpoint = torch.load(path, map_location=DEVICE)
+        if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
+            state_dict = checkpoint["state_dict"]
+        elif isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+            state_dict = checkpoint["model_state_dict"]
+        else:
+            state_dict = checkpoint
+        if not isinstance(state_dict, dict):
+            raise RuntimeError("Unsupported violence checkpoint format")
+        if any(str(k).startswith("module.") for k in state_dict):
+            state_dict = {str(k).removeprefix("module."): v for k, v in state_dict.items()}
+        model.load_state_dict(state_dict, strict=True)
 
         model.to(DEVICE)
         model.eval()
@@ -1027,13 +1060,7 @@ def _run_weapon_detection(
 
             bw = max(0, x2 - x1)
             bh = max(0, y2 - y1)
-            box_area = bw * bh
-            area_frac = box_area / frame_area
-            if area_frac < WEAPON_MIN_AREA_FRAC or area_frac > WEAPON_MAX_AREA_FRAC:
-                continue
-
-            aspect = (bw / bh) if bh > 0 else 0.0
-            if aspect < WEAPON_MIN_ASPECT or aspect > WEAPON_MAX_ASPECT:
+            if bw <= 0 or bh <= 0:
                 continue
 
             names = getattr(
@@ -1320,38 +1347,13 @@ def _run_anomaly(
 
     error_f = float(error)
 
-    # Per-stream warm-up: learn what "normal" looks like for THIS video
-    # before flagging anything. Without this, road/car footage always
-    # exceeds the static training threshold.
+    # The standalone training/test pipeline uses a fixed 0.01 threshold.
+    # Do not calibrate from the uploaded clip: a fight/anomaly at the start
+    # would otherwise teach the detector that the abnormal scene is normal.
+    threshold = ANOMALY_THRESHOLD
     if state is not None:
-        if not state.anomaly_calibrated:
-            state.anomaly_warmup_errors.append(error_f)
-            if len(state.anomaly_warmup_errors) >= ANOMALY_WARMUP_FRAMES:
-                arr = np.asarray(state.anomaly_warmup_errors, dtype=np.float64)
-                adaptive = float(arr.mean() + ANOMALY_STD_MULT * arr.std())
-                # Raise a little for noisy "normal" cameras, but never above
-                # ANOMALY_MAX_THRESHOLD — otherwise an already-anomalous clip
-                # (fight from frame 1) trains a bar it can never clear.
-                state.anomaly_threshold = min(
-                    max(ANOMALY_THRESHOLD, adaptive),
-                    ANOMALY_MAX_THRESHOLD,
-                )
-                state.anomaly_calibrated = True
-                logger.info(
-                    "Anomaly threshold calibrated to %.5f "
-                    "(floor=%.5f, cap=%.5f, mean=%.5f, std=%.5f) for %s",
-                    state.anomaly_threshold,
-                    ANOMALY_THRESHOLD,
-                    ANOMALY_MAX_THRESHOLD,
-                    float(arr.mean()),
-                    float(arr.std()),
-                    state.label or "stream",
-                )
-            return False, error_f
-
-        threshold = state.anomaly_threshold
-    else:
-        threshold = ANOMALY_THRESHOLD
+        state.anomaly_threshold = threshold
+        state.anomaly_calibrated = True
 
     return error_f > threshold, error_f
 
@@ -1410,13 +1412,12 @@ def _update_violence(
         axis=0,
     )
 
-    tensor = torch.tensor(
-        clip,
-        dtype=torch.float32,
+    tensor = torch.from_numpy(clip).to(
         device=DEVICE,
+        dtype=torch.float32,
     )
 
-    with torch.no_grad():
+    with torch.inference_mode():
 
         output = _violence_model(
             tensor
@@ -1448,15 +1449,13 @@ def _update_violence(
     else:
         state.last_violence_prediction = "NO FIGHT"
 
-    retained = list(
-        state.violence_frames
-    )[-VIOLENCE_RETAIN_FRAMES:]
-
+    # Match the working standalone detector: retain the second half of the
+    # clip and add every 2nd source frame. This gives the model the same
+    # temporal overlap as training/video.py while keeping inference bounded.
+    keep = list(state.violence_frames)[-VIOLENCE_RETAIN_FRAMES:]
     state.violence_frames.clear()
-
-    state.violence_frames.extend(
-        retained
-    )
+    state.violence_frames.extend(keep)
+    state.violence_inferences += 1
 
     return (
         state.last_violence_prediction,
@@ -1673,6 +1672,12 @@ class FrameProcessor:
         self.violence_frames = deque(
             maxlen=VIOLENCE_SEQUENCE_LENGTH
         )
+        # Run the expensive MC3-18 inference only after a fresh 16-frame
+        # clip has been collected. The old implementation retained 8 frames
+        # after inference and then ran MC3 again every 2 AI frames, causing
+        # dozens of full 3D-CNN passes and making uploads appear frozen.
+        self.violence_inferences = 0
+        self.last_violence_infer_frame = 0
 
         self.last_weapon_detections: List[Dict[str, Any]] = []
         self.last_ocr_detections: List[Dict[str, Any]] = []
@@ -1866,9 +1871,8 @@ class FrameProcessor:
         )
 
         if (
-            frame_number
-            % VIOLENCE_SAMPLE_INTERVAL
-            == 0
+            ENABLE_VIOLENCE
+            and frame_number % VIOLENCE_SAMPLE_INTERVAL == 0
         ):
 
             try:
