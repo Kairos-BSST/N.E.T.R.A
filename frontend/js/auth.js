@@ -8,6 +8,10 @@
   const password = document.getElementById('loginPassword');
   const submitBtn = document.getElementById('loginSubmitBtn');
   const passwordToggle = document.getElementById('loginPasswordToggle');
+  const capsLockWarning = document.getElementById('capsLockWarning');
+  const rememberMe = document.getElementById('loginRemember');
+  const usernameField = username?.closest('.login-field');
+  const passwordField = password?.closest('.login-field');
 
   function applyRoleVisibility(user) {
     const isAdmin = user.role === 'administrator';
@@ -31,6 +35,13 @@
     error.classList.remove('is-visible');
     void error.offsetWidth;
     error.classList.add('is-visible');
+    usernameField?.classList.add('has-error');
+    passwordField?.classList.add('has-error');
+  }
+
+  function clearFieldErrors() {
+    usernameField?.classList.remove('has-error');
+    passwordField?.classList.remove('has-error');
   }
 
   function hideError() {
@@ -43,8 +54,13 @@
     shell.hidden = false;
     const userLabel = document.getElementById('currentUserLabel');
     const roleLabel = document.getElementById('currentRoleLabel');
+    const sideUserName = document.getElementById('sideUserName');
+    const sideUserRole = document.getElementById('sideUserRole');
+    const roleText = user.role === 'administrator' ? 'ADMINISTRATOR' : 'OPERATOR';
     if (userLabel) userLabel.textContent = user.username;
-    if (roleLabel) roleLabel.textContent = user.role === 'administrator' ? 'ADMINISTRATOR' : 'OPERATOR';
+    if (roleLabel) roleLabel.textContent = roleText;
+    if (sideUserName) sideUserName.textContent = user.username;
+    if (sideUserRole) sideUserRole.textContent = roleText;
     applyRoleVisibility(user);
     window.NetraAuth = { user, logout };
     window.NetraApp?.enforceRoleVisibility?.(user.role);
@@ -61,11 +77,12 @@
   async function login(event) {
     event.preventDefault();
     hideError();
+    clearFieldErrors();
     setLoading(true);
     try {
       const res = await fetch('/auth/login', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: username.value.trim(), password: password.value }),
+        body: JSON.stringify({ username: username.value.trim(), password: password.value, remember: !!rememberMe?.checked }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || 'Login failed.');
@@ -91,8 +108,20 @@
     passwordToggle.classList.toggle('is-visible', show);
   });
 
+  function checkCapsLock(event) {
+    if (!capsLockWarning || typeof event.getModifierState !== 'function') return;
+    capsLockWarning.hidden = !event.getModifierState('CapsLock');
+  }
+  password?.addEventListener('keydown', checkCapsLock);
+  password?.addEventListener('keyup', checkCapsLock);
+  password?.addEventListener('blur', () => { if (capsLockWarning) capsLockWarning.hidden = true; });
+
+  username?.addEventListener('input', () => { usernameField?.classList.remove('has-error'); });
+  password?.addEventListener('input', () => { passwordField?.classList.remove('has-error'); });
+
   form?.addEventListener('submit', login);
   document.getElementById('logoutBtn')?.addEventListener('click', logout);
+  document.getElementById('sideNavLogoutBtn')?.addEventListener('click', logout);
 
   fetch('/auth/me')
     .then((res) => res.ok ? res.json() : Promise.reject(new Error('unauthenticated')))

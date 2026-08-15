@@ -13,62 +13,74 @@
 <div class="login-screen" id="loginScreen">
 <div class="login-card">
 <div class="login-brand-block">
-<div aria-hidden="true" class="login-brand-mark">
-<svg fill="none" stroke="#3FE8D0" stroke-width="1.6" viewbox="0 0 24 24"><path d="M2 12c2-4 5-6 10-6s8 2 10 6c-2 4-5 6-10 6s-8-2-10-6z"></path><circle cx="12" cy="12" r="2.4"></circle></svg>
+<div aria-hidden="true" class="login-brand-mark netra-eye">
+<svg fill="none" viewbox="0 0 24 24"><defs><linearGradient gradientUnits="userSpaceOnUse" id="netraEyeGradLogin" x1="2" x2="22" y1="6" y2="18"><stop offset="0" stop-color="#16C79A"/><stop offset="1" stop-color="#0B6B56"/></linearGradient></defs><path d="M2 12c2-4 5-6 10-6s8 2 10 6c-2 4-5 6-10 6s-8-2-10-6z" stroke="url(#netraEyeGradLogin)" stroke-width="1.6"></path><circle class="netra-eye-pupil" cx="12" cy="12" fill="url(#netraEyeGradLogin)" r="2.4"></circle></svg>
 </div>
 <div class="login-brand">NETRA</div>
-<div class="login-kicker">SECURE SURVEILLANCE CONSOLE</div>
+<div class="login-brand-full">Networked Event Tracking, Recognition &amp; Analysis</div>
 </div>
 <div class="login-intro">
 <h1>Sign in</h1>
 <p class="login-sub">Authenticate to access video analysis, reports and evidence.</p>
-<p class="login-account-note">NETRA does not use public sign-up. Accounts are provisioned for authorized operators and administrators.</p>
 </div>
 <form class="login-form" id="loginForm">
 <label class="login-field"><span>Username</span><input autocomplete="username" id="loginUsername" placeholder="Enter your username" required=""/></label>
 <label class="login-field"><span>Password</span>
 <span class="login-password-wrap">
-<input autocomplete="current-password" id="loginPassword" placeholder="Enter your password" required="" type="password"/>
+<input autocomplete="current-password" enterkeyhint="go" id="loginPassword" placeholder="Enter your password" required="" type="password"/>
 <button aria-label="Show password" aria-pressed="false" class="login-password-toggle" id="loginPasswordToggle" type="button">
 <svg class="icon-eye" fill="none" stroke="currentColor" stroke-width="1.8" viewbox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-<svg class="icon-eye-off" fill="none" stroke="currentColor" stroke-width="1.8" viewbox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-10-8-10-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 10 8 10 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"></path><line x1="1" x2="23" y1="1" y2="23"></line></svg>
+<svg class="icon-eye-off" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8" viewbox="0 0 24 24"><path d="M2 12.5c2.5 3 5.7 4.5 10 4.5s7.5-1.5 10-4.5"></path><path d="M5.2 16l-1.6 2.1M18.8 16l1.6 2.1M9.6 17.6l-.55 2.35M14.4 17.6l.55 2.35"></path></svg>
 </button>
 </span>
+<span class="login-capslock-warning" hidden="" id="capsLockWarning">
+<svg fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24"><path d="M12 2l9 16H3z"></path><line x1="12" x2="12" y1="9" y2="13"></line><circle cx="12" cy="16.5" fill="currentColor" r="0.6" stroke="none"></circle></svg>
+Caps Lock is on
+</span>
+</label>
+<label class="login-remember">
+<input id="loginRemember" type="checkbox"/>
+<span>Stay signed in on this device</span>
 </label>
 <button class="btn btn-live login-submit" id="loginSubmitBtn" type="submit"><span class="login-submit-label">SIGN IN</span><span aria-hidden="true" class="login-submit-spinner" hidden=""></span></button>
+<p class="login-help">Forgot your access? <span>Contact your administrator.</span></p>
 <p class="login-error" hidden="" id="loginError" role="alert"></p>
 </form>
+<div class="login-account-note">
+<svg aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" viewbox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><line x1="12" x2="12" y1="11" y2="16"></line><circle cx="12" cy="8" fill="currentColor" r="0.6" stroke="none"></circle></svg>
+<span>NETRA does not use public sign-up. Accounts are provisioned for authorized operators and administrators.</span>
 </div>
 </div>
-<div class="bg-dynamic">
-<span class="blob-1"></span>
-<span class="blob-2"></span>
-<span class="blob-3"></span>
 </div>
 <div class="app" hidden="" id="appShell">
 <aside aria-label="Main" class="side-nav" id="sideNav">
 <div class="side-nav-brand">
-<div class="brand-mark side-mark">
-<svg fill="none" stroke="#3FE8D0" stroke-width="1.6" viewbox="0 0 24 24"><path d="M2 12c2-4 5-6 10-6s8 2 10 6c-2 4-5 6-10 6s-8-2-10-6z"></path><circle cx="12" cy="12" r="2.4"></circle></svg>
+<div class="brand-mark side-mark netra-eye">
+<svg fill="none" viewbox="0 0 24 24"><defs><linearGradient gradientUnits="userSpaceOnUse" id="netraEyeGradSide" x1="2" x2="22" y1="6" y2="18"><stop offset="0" stop-color="#16C79A"/><stop offset="1" stop-color="#0B6B56"/></linearGradient></defs><path d="M2 12c2-4 5-6 10-6s8 2 10 6c-2 4-5 6-10 6s-8-2-10-6z" stroke="url(#netraEyeGradSide)" stroke-width="1.6"></path><circle class="netra-eye-pupil" cx="12" cy="12" fill="url(#netraEyeGradSide)" r="2.4"></circle></svg>
 </div>
 <div class="side-nav-brand-text">
 <div class="side-nav-title">NETRA</div>
-<div class="side-nav-subtitle">Surveillance Console</div>
 </div>
+<button aria-expanded="true" aria-label="Collapse sidebar" class="side-nav-toggle" id="sideNavToggle" title="Collapse sidebar" type="button">
+<svg fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24"><path d="M15 18l-6-6 6-6"></path></svg>
+</button>
 </div>
 <div class="side-nav-body">
 <div class="side-nav-section operator-only">
 <div class="side-nav-section-label">Operations</div>
 <nav aria-label="Operations" class="side-nav-menu">
-<button class="side-nav-item" data-view="dashboard" id="navDashboard" type="button">
+<button class="side-nav-item" data-view="dashboard" id="navDashboard" title="Dashboard — overview and launch" type="button">
 <span aria-hidden="true" class="side-nav-icon"><svg fill="none" stroke="currentColor" stroke-width="1.7" viewbox="0 0 24 24"><rect height="7" rx="1.5" width="7" x="3" y="3"></rect><rect height="7" rx="1.5" width="7" x="14" y="3"></rect><rect height="7" rx="1.5" width="7" x="3" y="14"></rect><rect height="7" rx="1.5" width="7" x="14" y="14"></rect></svg></span>
 <span class="side-nav-copy"><span class="side-nav-label">Dashboard</span><span class="side-nav-hint">overview and launch</span></span>
 </button>
-<button class="side-nav-item" data-view="alert" id="navAlert" type="button">
-<span aria-hidden="true" class="side-nav-icon"><svg fill="none" stroke="currentColor" stroke-width="1.7" viewbox="0 0 24 24"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 01-3.46 0"></path></svg></span>
+<button class="side-nav-item" data-view="alert" id="navAlert" title="Alerts — active detections" type="button">
+<span aria-hidden="true" class="side-nav-icon">
+<svg fill="none" stroke="currentColor" stroke-width="1.7" viewbox="0 0 24 24"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 01-3.46 0"></path></svg>
+<span class="side-nav-notif-dot" hidden="" id="sideNotifDot"></span>
+</span>
 <span class="side-nav-copy"><span class="side-nav-label">Alerts</span><span class="side-nav-hint">active detections</span></span>
 </button>
-<button class="side-nav-item" data-view="history" id="navHistory" type="button">
+<button class="side-nav-item" data-view="history" id="navHistory" title="History — past scans and reports" type="button">
 <span aria-hidden="true" class="side-nav-icon"><svg fill="none" stroke="currentColor" stroke-width="1.7" viewbox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg></span>
 <span class="side-nav-copy"><span class="side-nav-label">History</span><span class="side-nav-hint">past scans and reports</span></span>
 </button>
@@ -77,61 +89,36 @@
 <div class="side-nav-section admin-only" hidden="">
 <div class="side-nav-section-label">Administration</div>
 <nav aria-label="Administration" class="side-nav-menu">
-<button class="side-nav-item" data-view="adminActivity" id="navAdminActivity" type="button">
+<button class="side-nav-item" data-view="adminActivity" id="navAdminActivity" title="Activity — operator audit trail" type="button">
 <span aria-hidden="true" class="side-nav-icon"><svg fill="none" stroke="currentColor" stroke-width="1.7" viewbox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg></span>
 <span class="side-nav-copy"><span class="side-nav-label">Activity</span><span class="side-nav-hint">operator audit trail</span></span>
 </button>
-<button class="side-nav-item" data-view="adminScans" id="navAdminScans" type="button">
+<button class="side-nav-item" data-view="adminScans" id="navAdminScans" title="Report History — all completed analyses" type="button">
 <span aria-hidden="true" class="side-nav-icon"><svg fill="none" stroke="currentColor" stroke-width="1.7" viewbox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"></path><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"></path></svg></span>
 <span class="side-nav-copy"><span class="side-nav-label">Report History</span><span class="side-nav-hint">all completed analyses</span></span>
 </button>
-<button class="side-nav-item" data-view="adminOperators" id="navAdminOperators" type="button">
+<button class="side-nav-item" data-view="adminOperators" id="navAdminOperators" title="Add Operator — manage access" type="button">
 <span aria-hidden="true" class="side-nav-icon"><svg fill="none" stroke="currentColor" stroke-width="1.7" viewbox="0 0 24 24"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><line x1="19" x2="19" y1="8" y2="14"></line><line x1="22" x2="16" y1="11" y2="11"></line></svg></span>
 <span class="side-nav-copy"><span class="side-nav-label">Add Operator</span><span class="side-nav-hint">manage access</span></span>
 </button>
 </nav>
 </div>
 </div>
-<div class="side-nav-footer operator-only">
-<div class="side-nav-status"><span aria-hidden="true" class="side-nav-status-dot"></span>Console ready</div>
+<div class="side-nav-footer">
+<div class="side-nav-user" id="sideNavUser">
+<span aria-hidden="true" class="side-nav-user-avatar" id="sideUserAvatar">—</span>
+<span class="side-nav-user-meta">
+<span class="side-nav-user-name" id="sideUserName">—</span>
+<span class="side-nav-user-role" id="sideUserRole">—</span>
+</span>
 </div>
-<div class="side-nav-footer admin-only" hidden="">
-<div class="side-nav-status"><span aria-hidden="true" class="side-nav-status-dot"></span>Admin mode</div>
+<button class="side-nav-item side-nav-logout" id="sideNavLogoutBtn" title="Log out — end your session" type="button">
+<span aria-hidden="true" class="side-nav-icon"><svg fill="none" stroke="currentColor" stroke-width="1.7" viewbox="0 0 24 24"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"></path><path d="M16 17l5-5-5-5"></path><path d="M21 12H9"></path></svg></span>
+<span class="side-nav-copy"><span class="side-nav-label">Log out</span><span class="side-nav-hint">end your session</span></span>
+</button>
 </div>
 </aside>
 <div class="app-main">
-<header>
-<div class="header-main">
-<div class="header-brand-group">
-<div class="brand">
-<div class="brand-mark">
-<svg fill="none" stroke="#3FE8D0" stroke-width="1.6" viewbox="0 0 24 24"><path d="M2 12c2-4 5-6 10-6s8 2 10 6c-2 4-5 6-10 6s-8-2-10-6z"></path><circle cx="12" cy="12" r="2.4"></circle></svg>
-</div>
-<div>
-<div class="brand-name">SIGNAL INTAKE</div>
-<div class="brand-sub">VIDEO SOURCE CONSOLE</div>
-</div>
-</div>
-<div class="header-context">
-<div class="header-context-kicker" id="headerContextKicker">Operations</div>
-<div class="header-context-title" id="headerContextTitle">Dashboard overview</div>
-</div>
-</div>
-<div class="header-actions">
-<button class="back-btn" id="backBtn">
-<svg fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24"><path d="M15 18l-6-6 6-6"></path></svg>
-      BACK
-    </button>
-<div class="header-user">
-<div class="header-user-meta">
-<span class="header-user-name" id="currentUserLabel">—</span>
-<span class="role-chip" id="currentRoleLabel">—</span>
-</div>
-<button class="btn btn-ghost logout-btn" id="logoutBtn" type="button">LOG OUT</button>
-</div>
-</div>
-</div>
-</header>
 <div class="view-panel active" data-view-panel="dashboard" id="viewDashboard">
 <section class="dashboard-page">
 <div class="ws-header">
@@ -160,7 +147,7 @@
 <button class="btn btn-ghost" id="dashOpenHistory" type="button">VIEW HISTORY</button>
 </div>
 <section class="dashboard-source-section" id="hub">
-<div class="hub-title">Select where the video feed comes from. <span>The console adapts to whatever you pick.</span></div>
+<div class="hub-title">Select where the video feed comes from. <span>Available sources are listed below.</span></div>
 <div class="cards">
 <div class="card" data-source="live" tabindex="0">
 <div class="card-index">SOURCE / 01</div>
@@ -453,5 +440,41 @@
 <script src="/js/history.js?v=10"></script>
 <script src="/js/app.js?v=11"></script>
 <script src="/js/auth.js?v=11"></script>
+<script>
+(function(){
+  var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduceMotion) return;
+  var MAX_OFFSET = 1.6;   // px the pupil can drift inside the eye
+  var RADIUS = 140;       // px — cursor influence range around each mark
+  var eyes = [];
+  function collect(){
+    eyes = Array.prototype.map.call(document.querySelectorAll('.netra-eye'), function(el){
+      return { el: el, pupil: el.querySelector('.netra-eye-pupil') };
+    }).filter(function(e){ return e.pupil; });
+  }
+  function onMove(evt){
+    var x = evt.clientX, y = evt.clientY;
+    eyes.forEach(function(e){
+      var r = e.el.getBoundingClientRect();
+      var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      var dx = x - cx, dy = y - cy;
+      var dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > RADIUS || dist === 0){
+        e.pupil.style.transform = 'translate(0px,0px)';
+        return;
+      }
+      var pull = 1 - dist / RADIUS;
+      var ox = (dx / dist) * MAX_OFFSET * pull;
+      var oy = (dy / dist) * MAX_OFFSET * pull;
+      e.pupil.style.transform = 'translate(' + ox.toFixed(2) + 'px,' + oy.toFixed(2) + 'px)';
+    });
+  }
+  collect();
+  window.addEventListener('mousemove', onMove, { passive: true });
+  // re-collect if the sidebar / login screen toggles elements in and out
+  var mo = new MutationObserver(collect);
+  mo.observe(document.body, { childList: true, subtree: true });
+})();
+</script>
 </body>
 </html>
