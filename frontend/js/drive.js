@@ -1,5 +1,3 @@
-/* drive.js — Google Drive OAuth + fetch input */
-
 window.NetraDrive = {
   init(hooks = {}) {
     const driveConnectBtn = document.getElementById('driveConnectBtn');

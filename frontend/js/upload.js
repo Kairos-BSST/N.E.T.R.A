@@ -1,5 +1,3 @@
-/* upload.js — local video file upload */
-
 window.NetraUpload = {
   init() {
     const dropzone = document.getElementById('dropzone');
@@ -56,8 +54,6 @@ window.NetraUpload = {
       metaSize.textContent = formatSize(file.size);
       metaUploadStatus.textContent = 'Uploading…';
 
-      // Play the file locally in the shared preview player right away —
-      // no need to wait for the backend, the browser already has the bytes.
       window.NetraAnalysis.showVideoPreview(file);
 
       fileRow.innerHTML = `

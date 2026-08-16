@@ -1,4 +1,3 @@
-/* app.js — final NETRA role-aware navigation and source workspace */
 (function () {
   const $ = (id) => document.getElementById(id);
   const hub = $('hub');

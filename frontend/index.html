@@ -489,8 +489,8 @@ Caps Lock is on
 (function(){
   var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (reduceMotion) return;
-  var MAX_OFFSET = 1.6;   // px the pupil can drift inside the eye
-  var RADIUS = 140;       // px — cursor influence range around each mark
+  var MAX_OFFSET = 1.6;   
+  var RADIUS = 140;       
   var eyes = [];
   function collect(){
     eyes = Array.prototype.map.call(document.querySelectorAll('.netra-eye'), function(el){

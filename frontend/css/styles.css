@@ -2059,11 +2059,6 @@
   .side-nav-toggle{ display:none; }
 }
 
-/* NETRA eye mark — the one icon that should never blend in with the rest
-   of the UI. Layered effects: tinted gradient chip, oversized vs. plain
-   nav icons, a rotating radar-sweep inside the ring, a one-time "power on"
-   animation on load, the existing idle blink + outward glow pulse, and
-   (via JS in index.html) a pupil that drifts toward the cursor. */
 .netra-eye{
   position:relative;
   overflow:visible;

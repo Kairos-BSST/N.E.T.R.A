@@ -1,4 +1,3 @@
-/* alerts.js — current-scan detection frames only */
 window.NetraAlerts = {
   _pollTimer: null,
   _alerts: [],
