@@ -3,9 +3,14 @@
 ## 1. Prerequisites
 
 - Python 3.10+
-- Recommended: NVIDIA GPU + matching CUDA torch for faster CSRNet/crowd; other detectors default to CPU
-- Clone/pull the repo: https://github.com/Kairos-BSST/N.E.T.R.A.git
-- Pull model weights under `models/` (weapon, OCR, anomaly, violence as used by the backend):
+- Recommended: NVIDIA GPU 
+- Clone/pull the repo:
+
+```bash
+git clone https://github.com/Kairos-BSST/N.E.T.R.A.git
+```
+
+- Pull model weights (weapon, OCR, anomaly, violence, face):
 
 ```bash
 git lfs install
@@ -19,7 +24,7 @@ cd backend
 copy .env.example .env
 ```
 
-Fill in login + OAuth + webhook values in `.env` (do not commit `.env`).
+Fill in login + OAuth + webhook values in `.env`.
 
 ## 3. Google Drive (optional but needed for Drive)
 
@@ -54,7 +59,7 @@ python -m uvicorn api:app --reload --port 8000
 
 ## 6. Common issues
 
-Drive fails for others usually because of this:
+Drive fails usually because of this:
 
 - They have `backend/.env` filled
 - They have the OAuth JSON file (or their own client JSON)
