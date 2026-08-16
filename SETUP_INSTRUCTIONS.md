@@ -24,7 +24,7 @@ cd backend
 copy .env.example .env
 ```
 
-Fill in login + OAuth + webhook values in `.env`.
+Fill in login + OAuth + webhook (optional) values in `.env`.
 
 ## 3. Google Drive OAuth Setup
 
@@ -48,8 +48,6 @@ The application uses **Google OAuth 2.0** to authenticate users and access their
 6. Select **Web Application** as the application type.
 
 Add the following redirect URI:
-
-```text
 http://127.0.0.1:8000/auth/google/callback
 
 ### Step 3: Configure Test User
@@ -64,8 +62,6 @@ If the OAuth application is in **Testing** mode, the Google account used to test
 
 The user must sign in using the same Google account that has been added as a Test User.
 
-> **For project evaluation:** Evaluators should add **their own Google account** as a Test User. The project's personal Google account or credentials do not need to be provided.
-
 ### Step 4: Download OAuth Client JSON
 
 After creating the OAuth Client ID:
@@ -75,6 +71,7 @@ After creating the OAuth Client ID:
 
 ```text
 google_oauth_client_secret.json
+```
 3. Place it at:
 
 ```text
@@ -104,8 +101,6 @@ GOOGLE_OAUTH_REDIRECT_URI=http://127.0.0.1:8000/auth/google/callback
 ```
 
 > **Important:** The `GOOGLE_OAUTH_REDIRECT_URI` must exactly match the redirect URI configured in Google Cloud.
-
-> **Security:** Do not commit or publicly share the actual OAuth client JSON file or `.env` file. Evaluators should create their own OAuth credentials and use their own Google account as a Test User.
 
 ## 4. Install + run
 
