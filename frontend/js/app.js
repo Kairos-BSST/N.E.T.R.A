@@ -3,13 +3,11 @@
   const $ = (id) => document.getElementById(id);
   const hub = $('hub');
   const workspace = $('workspace');
-  const backBtn = $('backBtn');
-  const headerContextKicker = $('headerContextKicker');
-  const headerContextTitle = $('headerContextTitle');
   const wsSourceNum = $('wsSourceNum');
   const wsSourceName = $('wsSourceName');
   const wsSourceDesc = $('wsSourceDesc');
   const sideNav = $('sideNav');
+  const sideNavToggle = $('sideNavToggle');
   let driveHooks = null;
   let initialized = false;
 
@@ -18,31 +16,60 @@
     upload: { num: 'SOURCE / 02', name: 'Upload Video', desc: 'Send a video file straight from your device for analysis.', color: 'var(--upload)', panel: 'upload' },
     drive: { num: 'SOURCE / 03', name: 'Fetch from Drive', desc: 'Authorize Drive access and pull a file directly by API.', color: 'var(--drive)', panel: 'drive' },
   };
-  const viewMeta = {
-    dashboard: { kicker: 'Operations', title: 'Dashboard overview' },
-    alert: { kicker: 'Operations', title: 'Active scan alerts' },
-    history: { kicker: 'Operations', title: 'Analysis history' },
-    adminactivity: { kicker: 'Administration', title: 'System activity' },
-    adminscans: { kicker: 'Administration', title: 'Report history' },
-    adminoperators: { kicker: 'Administration', title: 'Operator management' },
-  };
-
   function enforceRoleVisibility(role) {
     const isAdmin = role === 'administrator';
     document.querySelectorAll('.admin-only').forEach((el) => { el.hidden = !isAdmin; });
     document.querySelectorAll('.operator-only').forEach((el) => { el.hidden = isAdmin; });
   }
 
-  function setHeaderContext(kicker, title) {
-    if (headerContextKicker) headerContextKicker.textContent = kicker;
-    if (headerContextTitle) headerContextTitle.textContent = title;
+  function initials(name) {
+    return String(name || '')
+      .trim()
+      .split(/[\s._-]+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0].toUpperCase())
+      .join('') || '—';
+  }
+
+  function setUserAvatar(name) {
+    const value = initials(name);
+    const sideAvatar = $('sideUserAvatar');
+    if (sideAvatar) sideAvatar.textContent = value;
+  }
+
+  function bindSidebarToggle() {
+    if (!sideNavToggle || !sideNav) return;
+    sideNavToggle.addEventListener('click', () => {
+      const collapsed = sideNav.classList.toggle('collapsed');
+      sideNavToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      sideNavToggle.setAttribute('title', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
+      sideNavToggle.setAttribute('aria-label', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
+    });
+  }
+
+  function bindSidebarKeyboardNav() {
+    if (!sideNav) return;
+    sideNav.addEventListener('keydown', (event) => {
+      const items = Array.from(sideNav.querySelectorAll('.side-nav-item')).filter((el) => !el.hidden && el.offsetParent !== null);
+      const current = document.activeElement;
+      const index = items.indexOf(current);
+      if (index === -1) return;
+      let nextIndex = null;
+      if (event.key === 'ArrowDown') nextIndex = (index + 1) % items.length;
+      else if (event.key === 'ArrowUp') nextIndex = (index - 1 + items.length) % items.length;
+      else if (event.key === 'Home') nextIndex = 0;
+      else if (event.key === 'End') nextIndex = items.length - 1;
+      if (nextIndex === null) return;
+      event.preventDefault();
+      items[nextIndex].focus();
+    });
   }
 
   function showView(view) {
     const name = String(view || '').toLowerCase();
     const allowed = ['dashboard', 'alert', 'history', 'adminactivity', 'adminscans', 'adminoperators'];
     const target = allowed.includes(name) ? name : 'dashboard';
-    const meta = viewMeta[target] || viewMeta.dashboard;
 
     document.querySelectorAll('[data-view-panel]').forEach((panel) => {
       const on = String(panel.dataset.viewPanel || '').toLowerCase() === target;
@@ -57,15 +84,13 @@
       btn.setAttribute('aria-current', on ? 'page' : 'false');
     });
 
-    setHeaderContext(meta.kicker, meta.title);
-
     if (target === 'dashboard') {
       hub?.classList.remove('hidden');
       workspace?.classList.remove('active');
-      backBtn?.classList.remove('show');
       window.NetraHistory?.loadDashboard?.();
     } else if (target === 'alert') {
       window.NetraAlerts?.refreshRecent?.();
+      document.getElementById('navAlert')?.classList.remove('has-alert');
     } else if (target === 'history') {
       window.NetraHistory?.refresh?.();
     } else if (target === 'adminactivity') {
@@ -90,8 +115,6 @@
     document.querySelectorAll('#workspace .ws-grid').forEach((grid) => {
       grid.style.display = grid.dataset.panel === meta.panel ? 'grid' : 'none';
     });
-    backBtn?.classList.add('show');
-    setHeaderContext('Operations', `${meta.name} workspace`);
     window.NetraAlerts?.setCurrentJob?.(null);
     driveHooks?.onSourceSelected?.(source);
   }
@@ -99,7 +122,7 @@
   function bindNavigation() {
     sideNav?.addEventListener('click', (event) => {
       const btn = event.target.closest('.side-nav-item');
-      if (!btn || btn.hidden) return;
+      if (!btn || btn.hidden || btn.id === 'sideNavLogoutBtn') return;
       event.preventDefault();
       showView(btn.dataset.view);
     });
@@ -110,7 +133,6 @@
       card.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); } });
     });
 
-    backBtn?.addEventListener('click', () => showView('dashboard'));
     $('dashOpenHistory')?.addEventListener('click', () => showView('history'));
   }
 
@@ -119,6 +141,9 @@
     initialized = true;
     enforceRoleVisibility(user?.role);
     bindNavigation();
+    bindSidebarToggle();
+    bindSidebarKeyboardNav();
+    setUserAvatar(user?.username);
     try {
       window.NetraLive?.init?.();
       window.NetraUpload?.init?.();

@@ -19,8 +19,18 @@ window.NetraAlerts = {
     this._alerts = [];
     this._selectedId = null;
     this.renderRecent([]);
+    this._updateSidebarBadge(0);
     const viewer = document.getElementById('alertFrameViewer');
     if (viewer) viewer.style.display = 'none';
+  },
+
+  _updateSidebarBadge(count) {
+    const dot = document.getElementById('sideNotifDot');
+    const navItem = document.getElementById('navAlert');
+    if (dot) dot.hidden = !count;
+    // Only wiggle the icon when the alerts tab isn't the one already open.
+    const onAlertView = navItem?.classList.contains('active');
+    if (navItem) navItem.classList.toggle('has-alert', !!count && !onAlertView);
   },
 
   _normalizeAlert(raw) {
@@ -64,6 +74,7 @@ window.NetraAlerts = {
       });
       this._alerts = alerts;
       this.renderRecent(alerts);
+      this._updateSidebarBadge(alerts.length);
       if (this._selectedId) {
         const still = alerts.find((a) => a.alert_id === this._selectedId);
         if (still) this.showFrame(still, { silent: true });
