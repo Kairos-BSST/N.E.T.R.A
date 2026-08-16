@@ -88,7 +88,7 @@ N.E.T.R.A-main/
 
 For installation, environment configuration, and setup instructions, refer to:
 
-`SETUP_INSTRUCTIONS.md`
+[SETUP_INSTRUCTIONS.md](SETUP_INSTRUCTIONS.md)
 
 ## System Architecture
 
@@ -144,19 +144,19 @@ For installation, environment configuration, and setup instructions, refer to:
 
 The auromatically generated Swagger UI can be viewed upon starting the project at: 
 
-[http://127.0.0.1:8000/docs]
+http://127.0.0.1:8000/docs
 
 The Swagger interface provides interactive documentation, request schemas, response structures, authentication requirements, and endpoint testing.
 
 A supplementary API reference is available in:
 
-`API.md`
+[API.md](API.md)
 
 ## Database Schema
 
 The database structure, tables, relationships, and integrity mechanisms are documented in:
 
-`schema.md`
+[schema.md](schema.md)
 
 ## Innovation
 
