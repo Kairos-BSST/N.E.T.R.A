@@ -186,7 +186,7 @@ Allows operators to filter activity records using date range, operator, and othe
 
 ## Video Demo
 
-[Video Demo](VIDEO_LINK_HERE)
+[Video Demo](https://drive.google.com/file/d/1bYHHEe888cB1ZIeOg10fkJWeOz01IF3x/view?usp=drivesdk)
 
 ## Contributors
 
