@@ -9,6 +9,7 @@ Models:
 3. Anomaly detection      - Convolutional Autoencoder (anomaly.pth)
 4. Violence detection     - MC3-18 (violence.pth)
 5. Crowd density/counting  - LWCC DM-Count (pretrained)
+6. Person-of-interest face  - OpenCV YuNet + SFace re-id
 
 Designed for CPU-only / low-memory systems.
 
@@ -61,11 +62,13 @@ ENABLE_OCR = _env_bool("ENABLE_OCR", True)
 ENABLE_ANOMALY = _env_bool("ENABLE_ANOMALY", True)
 ENABLE_VIOLENCE = _env_bool("ENABLE_VIOLENCE", True)
 ENABLE_CROWD = _env_bool("ENABLE_CROWD", True)
+ENABLE_FACE = _env_bool("ENABLE_FACE", True)
 
 # Crowd-density alert: raise an alert when the estimated number of people
 # in a frame reaches this threshold. LWCC/DM-Count is CPU-based.
 CROWD_THRESHOLD = int(os.getenv("CROWD_THRESHOLD", "40"))
 CROWD_INTERVAL = int(os.getenv("CROWD_INTERVAL", "60"))
+FACE_INTERVAL = int(os.getenv("FACE_INTERVAL", "8"))
 
 # A raw hit must survive this many consecutive inference checks before it
 # is treated as a real detection. One-frame YOLO flukes (car panel =
@@ -157,6 +160,7 @@ _model_status: Dict[str, str] = {
     "anomaly": "not_loaded",
     "violence": "not_loaded",
     "crowd": "not_loaded",
+    "face": "not_loaded",
 }
 
 _model_errors: Dict[str, str] = {}
@@ -192,6 +196,7 @@ def preload_models() -> Dict[str, str]:
         ("anomaly", ENABLE_ANOMALY, _load_anomaly_model),
         ("violence", ENABLE_VIOLENCE, _load_violence_model),
         ("crowd", ENABLE_CROWD, _load_crowd_model),
+        ("face", ENABLE_FACE, _load_face_model),
     ]
 
     try:
@@ -791,6 +796,30 @@ def _load_crowd_model() -> bool:
         return False
 
 
+def _load_face_model() -> bool:
+    """Load YuNet + SFace for person-of-interest re-identification."""
+    if not ENABLE_FACE:
+        _model_status["face"] = "disabled"
+        return False
+    if _model_status["face"] == "failed":
+        return False
+    try:
+        import face_reid
+
+        ok = face_reid.ensure_models()
+        if not ok:
+            raise RuntimeError(face_reid.status().get("error") or "face model load failed")
+        face_reid.ensure_gallery_loaded()
+        _model_status["face"] = "loaded"
+        logger.info("Face re-id models loaded (YuNet + SFace).")
+        return True
+    except Exception as exc:
+        _model_status["face"] = "failed"
+        _model_errors["face"] = str(exc)
+        logger.exception("Unable to load face re-id models")
+        return False
+
+
 def _run_crowd_detection(frame: np.ndarray) -> Tuple[float, bool]:
     """Estimate people count and return (count, threshold_alert)."""
     if not ENABLE_CROWD or not _load_crowd_model():
@@ -909,6 +938,13 @@ def _confirm_box_tracks(
                 and track["label"] != det["label"]
             ):
                 continue
+            if (
+                track.get("type") == "face"
+                and track.get("poi_id")
+                and det.get("poi_id")
+                and track["poi_id"] != det["poi_id"]
+            ):
+                continue
             iou = _bbox_iou(track["bbox"], det["bbox"])
             if iou > best_iou:
                 best_iou = iou
@@ -923,6 +959,9 @@ def _confirm_box_tracks(
             track["text"] = det.get("text")
             track["ocr_confidence"] = det.get("ocr_confidence")
             track["text_recognition"] = det.get("text_recognition", False)
+            track["poi_id"] = det.get("poi_id", track.get("poi_id"))
+            track["face_id"] = det.get("face_id", track.get("face_id"))
+            track["similarity"] = det.get("similarity", track.get("similarity"))
             track["hits"] = int(track.get("hits", 0)) + 1
             track["misses"] = 0
             track["confirmed"] = track["hits"] >= need_hits
@@ -954,6 +993,9 @@ def _confirm_box_tracks(
             "text": t.get("text") or t.get("plate_number"),
             "text_recognition": bool(t.get("text_recognition")),
             "ocr_confidence": t.get("ocr_confidence", 0.0),
+            "poi_id": t.get("poi_id"),
+            "face_id": t.get("face_id"),
+            "similarity": t.get("similarity"),
             "confirmed": True,
             "confirm_hits": t.get("hits", 0),
         }
@@ -976,6 +1018,10 @@ def _confirm_box_tracks(
             out["text"] = d.get("text")
             out["text_recognition"] = d.get("text_recognition")
             out["ocr_confidence"] = d.get("ocr_confidence")
+        if d["type"] == "face":
+            out["poi_id"] = d.get("poi_id")
+            out["face_id"] = d.get("face_id")
+            out["similarity"] = d.get("similarity", d.get("confidence"))
         cleaned.append(out)
 
     return alive, cleaned
@@ -1481,70 +1527,85 @@ def draw_detections_on_frame(
     return out
 
 
+def make_frame_level_detection(
+    frame_w: int,
+    frame_h: int,
+    event_type: str,
+    label: str,
+    confidence: float = 0.0,
+    margin: int = 14,
+) -> Dict[str, Any]:
+    """Synthetic full-frame box for anomaly / violence report snapshots."""
+    x1 = max(0, margin)
+    y1 = max(0, margin)
+    x2 = max(x1 + 1, int(frame_w) - margin)
+    y2 = max(y1 + 1, int(frame_h) - margin)
+    return {
+        "type": event_type,
+        "label": label,
+        "confidence": float(confidence or 0.0),
+        "bbox": [x1, y1, x2, y2],
+        "frame_level": True,
+    }
+
+
+def _detection_color(detection_type: str) -> Tuple[int, int, int]:
+    t = (detection_type or "").lower()
+    if t == "weapon":
+        return (0, 0, 220)
+    if t == "face":
+        return (0, 140, 255)
+    if t in {"number_plate", "plate"}:
+        return (0, 200, 0)
+    if t == "anomaly":
+        return (0, 180, 255)
+    if t == "violence":
+        return (180, 0, 220)
+    return (0, 200, 0)
+
+
 def _draw_detection(
     frame: np.ndarray,
     detection: Dict[str, Any],
 ) -> None:
 
     bbox = detection.get("bbox")
-
     if not bbox:
         return
 
-    x1, y1, x2, y2 = bbox
+    x1, y1, x2, y2 = [int(v) for v in bbox]
+    detection_type = str(detection.get("type", "") or "")
+    color = _detection_color(detection_type)
+    thickness = 3 if detection.get("frame_level") or detection_type in {"anomaly", "violence"} else 2
 
-    detection_type = detection.get(
-        "type",
-        "",
-    )
+    cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
 
-    if detection_type == "weapon":
-        color = (0, 0, 220)
+    if detection.get("frame_level") or detection_type in {"anomaly", "violence"}:
+        corner = max(18, min(40, (x2 - x1) // 12))
+        for (cx, cy, dx, dy) in (
+            (x1, y1, 1, 1), (x2, y1, -1, 1), (x1, y2, 1, -1), (x2, y2, -1, -1),
+        ):
+            cv2.line(frame, (cx, cy), (cx + dx * corner, cy), color, 3)
+            cv2.line(frame, (cx, cy), (cx, cy + dy * corner), color, 3)
+
+    label = detection.get("label", "")
+    confidence = detection.get("confidence", 0.0)
+    if detection_type in {"number_plate", "plate"} and detection.get("plate_number"):
+        text = str(detection["plate_number"])
+    elif detection_type in {"anomaly", "violence"}:
+        text = str(label or detection_type).upper()
+        if confidence:
+            text = f"{text} {float(confidence):.2f}"
     else:
-        color = (0, 200, 0)
+        text = f"{label} {float(confidence or 0.0):.2f}".strip()
 
-    cv2.rectangle(
-        frame,
-        (x1, y1),
-        (x2, y2),
-        color,
-        2,
-    )
-
-    label = detection.get(
-        "label",
-        "",
-    )
-
-    confidence = detection.get(
-        "confidence",
-        0.0,
-    )
-
-    if (
-        detection_type == "number_plate"
-        and detection.get("plate_number")
-    ):
-        text = detection["plate_number"]
-    else:
-        text = (
-            f"{label} "
-            f"{confidence:.2f}"
-        )
-
-    cv2.putText(
-        frame,
-        text,
-        (
-            x1,
-            max(18, y1 - 8),
-        ),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.55,
-        color,
-        2,
-        cv2.LINE_AA,
-    )
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = 0.6
+    (tw, th), _ = cv2.getTextSize(text, font, scale, 2)
+    tag_x = x1
+    tag_y = max(th + 10, y1 - 6)
+    cv2.rectangle(frame, (tag_x, tag_y - th - 8), (tag_x + tw + 10, tag_y + 4), color, -1)
+    cv2.putText(frame, text, (tag_x + 5, tag_y - 2), font, scale, (255, 255, 255), 2, cv2.LINE_AA)
 
 
 def _draw_hud(
@@ -1681,8 +1742,10 @@ class FrameProcessor:
 
         self.last_weapon_detections: List[Dict[str, Any]] = []
         self.last_ocr_detections: List[Dict[str, Any]] = []
+        self.last_face_detections: List[Dict[str, Any]] = []
         self._weapon_tracks: List[Dict[str, Any]] = []
         self._ocr_tracks: List[Dict[str, Any]] = []
+        self._face_tracks: List[Dict[str, Any]] = []
 
         self.last_anomaly_detected = False
         self.last_anomaly_error = 0.0
@@ -1933,12 +1996,41 @@ class FrameProcessor:
                 logger.exception("Crowd-density inference failed")
 
         # --------------------------------------------------------
+        # Person-of-interest face re-identification
+        # --------------------------------------------------------
+        if (
+            ENABLE_FACE
+            and (
+                frame_number == 1
+                or scene_changed
+                or frame_number % FACE_INTERVAL == 0
+            )
+        ):
+            try:
+                if _load_face_model():
+                    import face_reid
+
+                    raw_faces = face_reid.match_frame(frame)
+                    self._face_tracks, self.last_face_detections = (
+                        _confirm_box_tracks(
+                            self._face_tracks,
+                            raw_faces,
+                            need_hits=DETECT_CONFIRM_HITS,
+                            need_misses=DETECT_CLEAR_MISSES,
+                            iou_thresh=BOX_MATCH_IOU,
+                        )
+                    )
+            except Exception:
+                logger.exception("Face re-id inference failed")
+
+        # --------------------------------------------------------
         # Combined detections
         # --------------------------------------------------------
 
         detections = (
             list(self.last_weapon_detections)
             + list(self.last_ocr_detections)
+            + list(self.last_face_detections)
         )
 
         if draw:
@@ -1990,6 +2082,10 @@ class FrameProcessor:
 
             "ocr_detections": list(
                 self.last_ocr_detections
+            ),
+
+            "face_detections": list(
+                self.last_face_detections
             ),
 
             "anomaly": {

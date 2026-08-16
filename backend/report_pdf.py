@@ -34,6 +34,7 @@ EVENT_TITLES = {
     "plate": "NUMBER PLATE",
     "anomaly": "ANOMALY",
     "violence": "VIOLENCE",
+    "face": "PERSON OF INTEREST",
 }
 
 EVENT_HEX_COLORS = {
@@ -41,6 +42,7 @@ EVENT_HEX_COLORS = {
     "plate": "#2E6B9B",
     "anomaly": "#9B7A2E",
     "violence": "#9B3B2E",
+    "face": "#C46A1A",
 }
 
 
@@ -123,6 +125,7 @@ def build_report_pdf(job: Dict[str, Any]) -> str:
         ["Total events logged", str(len(events))],
         ["Weapon events", str(sum(1 for e in events if e.get("type") == "weapon"))],
         ["Plate events", str(sum(1 for e in events if e.get("type") == "plate"))],
+        ["Face / POI events", str(sum(1 for e in events if e.get("type") == "face"))],
         ["Anomaly events", str(sum(1 for e in events if e.get("type") == "anomaly"))],
         ["Violence events", str(sum(1 for e in events if e.get("type") == "violence"))],
     ]

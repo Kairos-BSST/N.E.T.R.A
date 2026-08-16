@@ -42,6 +42,9 @@ class Config:
     # back to the frontend/report via the /snapshots static mount.
     SNAPSHOT_DIR: str = os.getenv("SNAPSHOT_DIR", "./analysis_snapshots")
 
+    # Enrolled person-of-interest face images (max 2 per POI).
+    POI_GALLERY_DIR: str = os.getenv("POI_GALLERY_DIR", "./poi_gallery")
+
     # Absolute base URL embedded in webhook alert payloads so operators
     # can open snapshot/clip links from Slack/Teams/etc.
     PUBLIC_BASE_URL: str = os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:8000")
@@ -73,6 +76,7 @@ class Config:
         os.makedirs(cls.LOCAL_DRIVE_DOWNLOAD_DIR, exist_ok=True)
         os.makedirs(cls.LOCAL_UPLOAD_DIR, exist_ok=True)
         os.makedirs(cls.SNAPSHOT_DIR, exist_ok=True)
+        os.makedirs(cls.POI_GALLERY_DIR, exist_ok=True)
 
     @classmethod
     def validate_drive(cls) -> None:

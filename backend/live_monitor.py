@@ -64,8 +64,10 @@ class LiveMonitor:
             "plate": False,
             "anomaly": False,
             "violence": False,
+            "face": False,
         }
         self._last_plate_key: Optional[str] = None
+        self._last_face_key: Optional[str] = None
         self._loop_started_monotonic = 0.0
 
     # ------------------------------------------------------------------
@@ -275,6 +277,16 @@ class LiveMonitor:
         frame_h, frame_w = frame.shape[:2]
         video_time = max(0.0, time.perf_counter() - (self._loop_started_monotonic or time.perf_counter()))
 
+        def _snapshot_dets(*extra):
+            dets = []
+            dets.extend(meta.get("weapon_detections") or [])
+            dets.extend(meta.get("ocr_detections") or [])
+            dets.extend(meta.get("face_detections") or [])
+            for item in extra:
+                if item:
+                    dets.append(item)
+            return dets
+
         def _log(event_type, label_text, confidence, extra=None, snap_dets=None):
             event_id = uuid.uuid4().hex[:12]
             snapshot_url = analysis_pipeline._save_snapshot(
@@ -310,7 +322,7 @@ class LiveMonitor:
                         bbox, frame_w, frame_h, label
                     ),
                 },
-                snap_dets=weapon_dets,
+                snap_dets=_snapshot_dets(),
             )
         self._active_state["weapon"] = weapon_now
 
@@ -339,7 +351,7 @@ class LiveMonitor:
                             bbox, frame_w, frame_h, label
                         ),
                     },
-                    snap_dets=ocr_dets,
+                    snap_dets=_snapshot_dets(),
                 )
                 self._last_plate_key = plate_key
         else:
@@ -349,6 +361,10 @@ class LiveMonitor:
         anomaly = meta.get("anomaly") or {}
         anomaly_now = bool(anomaly.get("detected"))
         if anomaly_now and not self._active_state["anomaly"]:
+            frame_det = frame_processor.make_frame_level_detection(
+                frame_w, frame_h, "anomaly", "Anomalous activity",
+                confidence=float(anomaly.get("error") or 0.0),
+            )
             _log(
                 "anomaly",
                 "Anomalous activity",
@@ -356,27 +372,62 @@ class LiveMonitor:
                 {
                     "reconstruction_error": anomaly.get("error"),
                     "threshold": anomaly.get("threshold"),
+                    "bbox": frame_det["bbox"],
                     "location": analysis_pipeline._describe_location(
-                        None, frame_w, frame_h, label
+                        frame_det["bbox"], frame_w, frame_h, label
                     ),
                 },
+                snap_dets=_snapshot_dets(frame_det),
             )
         self._active_state["anomaly"] = anomaly_now
 
         violence = meta.get("violence") or {}
         violence_now = str(violence.get("prediction") or "").upper() == "FIGHT"
         if violence_now and not self._active_state["violence"]:
+            conf = float(violence.get("confidence") or 0.0)
+            frame_det = frame_processor.make_frame_level_detection(
+                frame_w, frame_h, "violence", "Fight / violent activity", confidence=conf,
+            )
             _log(
                 "violence",
                 "Fight / violent activity",
-                violence.get("confidence", 0.0),
+                conf,
                 {
+                    "bbox": frame_det["bbox"],
                     "location": analysis_pipeline._describe_location(
-                        None, frame_w, frame_h, label
+                        frame_det["bbox"], frame_w, frame_h, label
                     ),
                 },
+                snap_dets=_snapshot_dets(frame_det),
             )
         self._active_state["violence"] = violence_now
+
+        face_dets = meta.get("face_detections") or []
+        face_now = bool(face_dets)
+        if face_now:
+            top = max(face_dets, key=lambda d: d.get("confidence", 0.0))
+            face_key = str(top.get("poi_id") or top.get("label") or "face")
+            if (not self._active_state["face"]) or (face_key != self._last_face_key):
+                bbox = top.get("bbox")
+                _log(
+                    "face",
+                    top.get("label") or "Person of interest",
+                    top.get("confidence", 0.0),
+                    {
+                        "bbox": bbox,
+                        "poi_id": top.get("poi_id"),
+                        "face_id": top.get("face_id"),
+                        "similarity": top.get("similarity", top.get("confidence")),
+                        "location": analysis_pipeline._describe_location(
+                            bbox, frame_w, frame_h, label
+                        ),
+                    },
+                    snap_dets=_snapshot_dets(),
+                )
+                self._last_face_key = face_key
+        else:
+            self._last_face_key = None
+        self._active_state["face"] = face_now
 
     def _capture_loop(self) -> None:
         logger.info("Live capture loop started for %s", self._source_label)
@@ -388,8 +439,10 @@ class LiveMonitor:
             "plate": False,
             "anomaly": False,
             "violence": False,
+            "face": False,
         }
         self._last_plate_key = None
+        self._last_face_key = None
 
         while not self._stop_event.is_set():
             with self._lock:

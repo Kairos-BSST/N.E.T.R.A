@@ -84,6 +84,10 @@ Caps Lock is on
 <span aria-hidden="true" class="side-nav-icon"><svg fill="none" stroke="currentColor" stroke-width="1.7" viewbox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg></span>
 <span class="side-nav-copy"><span class="side-nav-label">History</span><span class="side-nav-hint">past scans and reports</span></span>
 </button>
+<button class="side-nav-item" data-view="poi" id="navPoi" title="Persons of Interest — face gallery / re-id" type="button">
+<span aria-hidden="true" class="side-nav-icon"><svg fill="none" stroke="currentColor" stroke-width="1.7" viewbox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg></span>
+<span class="side-nav-copy"><span class="side-nav-label">Persons of Interest</span><span class="side-nav-hint">face gallery / re-id</span></span>
+</button>
 </nav>
 </div>
 <div class="side-nav-section admin-only" hidden="">
@@ -100,6 +104,10 @@ Caps Lock is on
 <button class="side-nav-item" data-view="adminOperators" id="navAdminOperators" title="Add Operator — manage access" type="button">
 <span aria-hidden="true" class="side-nav-icon"><svg fill="none" stroke="currentColor" stroke-width="1.7" viewbox="0 0 24 24"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><line x1="19" x2="19" y1="8" y2="14"></line><line x1="22" x2="16" y1="11" y2="11"></line></svg></span>
 <span class="side-nav-copy"><span class="side-nav-label">Add Operator</span><span class="side-nav-hint">manage access</span></span>
+</button>
+<button class="side-nav-item" data-view="poi" id="navAdminPoi" title="Persons of Interest — face gallery / re-id" type="button">
+<span aria-hidden="true" class="side-nav-icon"><svg fill="none" stroke="currentColor" stroke-width="1.7" viewbox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg></span>
+<span class="side-nav-copy"><span class="side-nav-label">Persons of Interest</span><span class="side-nav-hint">face gallery / re-id</span></span>
 </button>
 </nav>
 </div>
@@ -361,7 +369,7 @@ Caps Lock is on
 <input id="historySearch" placeholder="Search video, job ID, source, plate or detection…"/>
 <select id="historySource"><option value="">All sources</option><option value="upload">Upload</option><option value="drive">Drive</option><option value="live">Live</option><option value="webcam">Webcam</option></select>
 <select id="historyStatus"><option value="">All status</option><option value="queued">Queued</option><option value="processing">Processing</option><option value="completed">Completed</option><option value="failed">Failed</option><option value="disconnected">Disconnected</option></select>
-<select id="historyEvent"><option value="">All detections</option><option value="weapon">Weapon</option><option value="plate">Plate</option><option value="anomaly">Anomaly</option><option value="violence">Violence</option></select>
+<select id="historyEvent"><option value="">All detections</option><option value="weapon">Weapon</option><option value="face">Person of interest</option><option value="plate">Plate</option><option value="anomaly">Anomaly</option><option value="violence">Violence</option></select>
 <input id="historyFrom" title="From date" type="date"/><input id="historyTo" title="To date" type="date"/>
 <button class="btn btn-live" id="historySearchBtn" type="button">SEARCH</button>
 <button class="btn btn-ghost" id="historyClearBtn" type="button">CLEAR</button>
@@ -371,6 +379,42 @@ Caps Lock is on
 </section>
 
 </div><!-- /viewHistory -->
+<div class="view-panel" data-view-panel="poi" hidden="" id="viewPoi">
+<section class="history-page poi-page">
+<div class="ws-header">
+<div class="ws-source-num">OPS / PERSONS OF INTEREST</div>
+<h2 class="ws-source-name">Face gallery</h2>
+<p class="ws-source-desc">Upload 1–2 clear face photos per person. Images are stored and used for re-identification during live and uploaded video analysis.</p>
+</div>
+<form class="operator-form poi-form" id="poiEnrollForm">
+<div class="field-row">
+<label class="field"><span>Name</span><input autocomplete="off" id="poiName" maxlength="80" minlength="2" placeholder="e.g. Watchlist subject" required=""/></label>
+<label class="field"><span>Notes (optional)</span><input autocomplete="off" id="poiNotes" maxlength="200" placeholder="Case ID, reason…"/></label>
+</div>
+<label class="field poi-upload-field">
+<span>Face images (max 2 at a time)</span>
+<div class="poi-upload-row">
+<input accept="image/jpeg,image/png,image/webp,image/bmp" id="poiImages" multiple="" required="" type="file"/>
+<button class="btn btn-ghost" id="poiChooseBtn" type="button">CHOOSE PHOTOS</button>
+<span class="muted" id="poiFileLabel">No photos selected</span>
+</div>
+</label>
+<div class="poi-preview" id="poiPreview"></div>
+<button class="btn btn-live" type="submit">SAVE PERSON</button>
+<button class="btn btn-ghost" id="poiRefreshBtn" type="button">REFRESH GALLERY</button>
+<p class="login-error" hidden="" id="poiFormError"></p>
+<p class="operator-form-success" hidden="" id="poiFormSuccess"></p>
+<p class="muted" id="poiStatus" style="margin-top:12px;">Gallery not loaded yet.</p>
+</form>
+<div class="panel-label" style="margin-top:34px;">STORED PERSONS</div>
+<div class="history-table-wrap" style="margin-top:10px;">
+<table class="history-table">
+<thead><tr><th>Person</th><th>Stored faces</th><th>Notes</th><th></th></tr></thead>
+<tbody id="poiRows"></tbody>
+</table>
+</div>
+</section>
+</div>
 <div class="view-panel" data-view-panel="adminActivity" hidden="" id="viewAdminActivity">
 <section class="history-page admin-page">
 <div class="ws-header">
@@ -432,13 +476,14 @@ Caps Lock is on
 </div>
 </div><!-- /app-main -->
 </div>
-<script src="/js/analysis.js?v=10"></script>
+<script src="/js/analysis.js?v=12"></script>
 <script src="/js/alerts.js?v=10"></script>
 <script src="/js/live.js?v=10"></script>
 <script src="/js/upload.js?v=10"></script>
 <script src="/js/drive.js?v=10"></script>
 <script src="/js/history.js?v=10"></script>
-<script src="/js/app.js?v=11"></script>
+<script src="/js/poi.js?v=4"></script>
+<script src="/js/app.js?v=13"></script>
 <script src="/js/auth.js?v=11"></script>
 <script>
 (function(){

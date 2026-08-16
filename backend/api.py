@@ -15,9 +15,12 @@ from inputs import analysis as analysis_input
 from inputs import alerts as alerts_input
 from inputs import drive as drive_input
 from inputs import live as live_input
+from inputs import poi as poi_input
 from inputs import upload as upload_input
 from auth import router as auth_router
 import frame_processor
+import face_reid
+import database as db_mod
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("netra.api")
@@ -39,6 +42,7 @@ app.include_router(upload_input.router)
 app.include_router(drive_input.router)
 app.include_router(analysis_input.router)
 app.include_router(alerts_input.router)
+app.include_router(poi_input.router)
 app.include_router(auth_router)
 
 if os.path.isdir(FRONTEND_DIR):
@@ -64,6 +68,15 @@ async def preload_ai_models_in_background():
         name="netra-model-preloader",
         daemon=True,
     ).start()
+
+    def _preload_face():
+        try:
+            face_reid.ensure_models()
+            face_reid.reload_gallery(db_mod.list_poi_embeddings())
+        except Exception:
+            logger.exception("Face re-id preload failed")
+
+    threading.Thread(target=_preload_face, name="netra-face-preloader", daemon=True).start()
 
 
 @app.get("/")

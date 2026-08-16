@@ -2116,3 +2116,11 @@
   .netra-eye svg{ animation:none; }
   .netra-eye-pupil{ transition:none; }
 }
+
+/* Person-of-interest gallery */
+.poi-form{max-width:760px}
+.poi-upload-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:8px}
+.poi-upload-field input[type=file]{display:none}
+.poi-preview{display:flex;gap:12px;flex-wrap:wrap;margin:12px 0 16px}
+.poi-preview-img,.poi-thumb{width:96px;height:96px;object-fit:cover;border-radius:10px;border:1px solid rgba(33,31,27,.12);background:rgba(255,255,255,.5)}
+.poi-thumbs{display:flex;gap:8px;flex-wrap:wrap;align-items:center}

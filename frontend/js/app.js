@@ -68,7 +68,7 @@
 
   function showView(view) {
     const name = String(view || '').toLowerCase();
-    const allowed = ['dashboard', 'alert', 'history', 'adminactivity', 'adminscans', 'adminoperators'];
+    const allowed = ['dashboard', 'alert', 'history', 'poi', 'adminactivity', 'adminscans', 'adminoperators'];
     const target = allowed.includes(name) ? name : 'dashboard';
 
     document.querySelectorAll('[data-view-panel]').forEach((panel) => {
@@ -93,6 +93,8 @@
       document.getElementById('navAlert')?.classList.remove('has-alert');
     } else if (target === 'history') {
       window.NetraHistory?.refresh?.();
+    } else if (target === 'poi') {
+      window.NetraPoi?.load?.();
     } else if (target === 'adminactivity') {
       window.NetraHistory?.loadAdmin?.();
     } else if (target === 'adminscans') {
@@ -149,6 +151,7 @@
       window.NetraUpload?.init?.();
       if (window.NetraDrive) driveHooks = window.NetraDrive.init({ selectSource });
       window.NetraHistory?.init?.(user);
+      window.NetraPoi?.bind?.();
       window.NetraAlerts?.bind?.();
     } catch (err) {
       console.error('NETRA module initialization failed', err);

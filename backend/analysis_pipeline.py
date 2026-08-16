@@ -502,6 +502,7 @@ def _file_analysis_worker(job_id: str) -> None:
     last_meta: Dict[str, Any] = {}
     plates_seen: Dict[str, Dict[str, Any]] = {}
     last_plate_key: Optional[str] = None
+    last_face_key: Optional[str] = None
 
     # Whether each event type is CURRENTLY being detected. An event is
     # only logged on the False -> True transition (i.e. when something
@@ -513,6 +514,7 @@ def _file_analysis_worker(job_id: str) -> None:
         "plate": False,
         "anomaly": False,
         "violence": False,
+        "face": False,
     }
 
     # Models are preloaded once by the API startup thread. A video can be
@@ -775,6 +777,16 @@ def _file_analysis_worker(job_id: str) -> None:
 
             frame_h, frame_w = frame.shape[:2]
 
+            def _snapshot_dets(*extra):
+                dets = []
+                dets.extend(meta.get("weapon_detections") or [])
+                dets.extend(meta.get("ocr_detections") or [])
+                dets.extend(meta.get("face_detections") or [])
+                for item in extra:
+                    if item:
+                        dets.append(item)
+                return dets
+
             weapon_dets = meta.get("weapon_detections", [])
             weapon_now = bool(weapon_dets)
             if weapon_now and not active_state["weapon"]:
@@ -787,7 +799,7 @@ def _file_analysis_worker(job_id: str) -> None:
                         "bbox": bbox,
                         "location": _describe_location(bbox, frame_w, frame_h, source_label),
                     },
-                    snap_dets=weapon_dets,
+                    snap_dets=_snapshot_dets(),
                 )
             active_state["weapon"] = weapon_now
 
@@ -821,7 +833,7 @@ def _file_analysis_worker(job_id: str) -> None:
                                 bbox, frame_w, frame_h, source_label
                             ),
                         },
-                        snap_dets=ocr_dets,
+                        snap_dets=_snapshot_dets(),
                     )
                     if top.get("plate_number"):
                         plates_seen[plate_key] = {
@@ -842,23 +854,63 @@ def _file_analysis_worker(job_id: str) -> None:
 
             anomaly_now = bool(anomaly.get("detected"))
             if anomaly_now and not active_state["anomaly"]:
+                frame_det = frame_processor.make_frame_level_detection(
+                    frame_w, frame_h, "anomaly", "Anomalous activity", confidence=anomaly_error,
+                )
                 _log_event(
                     "anomaly", "Anomalous activity", 0.0,
                     {
                         "reconstruction_error": round(anomaly_error, 6),
                         "threshold": anomaly.get("threshold"),
-                        "location": _describe_location(None, frame_w, frame_h, source_label),
+                        "bbox": frame_det["bbox"],
+                        "location": _describe_location(frame_det["bbox"], frame_w, frame_h, source_label),
                     },
+                    snap_dets=_snapshot_dets(frame_det),
                 )
             active_state["anomaly"] = anomaly_now
 
             violence_now = prediction == "FIGHT"
             if violence_now and not active_state["violence"]:
+                frame_det = frame_processor.make_frame_level_detection(
+                    frame_w, frame_h, "violence", "Fight / violent activity", confidence=confidence,
+                )
                 _log_event(
                     "violence", "Fight / violent activity", confidence,
-                    {"location": _describe_location(None, frame_w, frame_h, source_label)},
+                    {
+                        "bbox": frame_det["bbox"],
+                        "location": _describe_location(frame_det["bbox"], frame_w, frame_h, source_label),
+                    },
+                    snap_dets=_snapshot_dets(frame_det),
                 )
             active_state["violence"] = violence_now
+
+            face_dets = meta.get("face_detections", [])
+            face_now = bool(face_dets)
+            if face_now:
+                top = max(face_dets, key=lambda d: d.get("confidence", 0.0))
+                face_key = str(top.get("poi_id") or top.get("label") or "face")
+                should_log_face = (not active_state["face"]) or (face_key != last_face_key)
+                if should_log_face:
+                    bbox = top.get("bbox")
+                    _log_event(
+                        "face",
+                        top.get("label") or "Person of interest",
+                        top.get("confidence", 0.0),
+                        {
+                            "detections_in_frame": len(face_dets),
+                            "bbox": bbox,
+                            "poi_id": top.get("poi_id"),
+                            "face_id": top.get("face_id"),
+                            "similarity": top.get("similarity", top.get("confidence")),
+                            "location": _describe_location(bbox, frame_w, frame_h, source_label),
+                        },
+                        snap_dets=_snapshot_dets(),
+                    )
+                    last_face_key = face_key
+            else:
+                last_face_key = None
+            active_state["face"] = face_now
+
             # ------------------------------------------------
             # Progress update
             # ------------------------------------------------

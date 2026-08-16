@@ -55,6 +55,19 @@
       "include_clip": false
     },
     {
+      "id": "poi-face-match",
+      "name": "Person of interest",
+      "enabled": true,
+      "event_types": [
+        "face"
+      ],
+      "min_confidence": 0.35,
+      "watchlist_id": null,
+      "cooldown_seconds": 5.0,
+      "severity": "critical",
+      "include_clip": true
+    },
+    {
       "id": "e2cb2d10481b",
       "name": "Watchlist plate match",
       "enabled": false,

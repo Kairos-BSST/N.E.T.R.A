@@ -8,7 +8,7 @@ import secrets
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from config import Config
 
@@ -130,6 +130,28 @@ def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_logs(timestamp);
             CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_logs(user_id);
+            CREATE TABLE IF NOT EXISTS poi_persons (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                notes TEXT,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_by INTEGER,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL
+            );
+            CREATE TABLE IF NOT EXISTS poi_faces (
+                id TEXT PRIMARY KEY,
+                poi_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                file_name TEXT,
+                embedding BLOB NOT NULL,
+                detect_score REAL,
+                bbox_json TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(poi_id) REFERENCES poi_persons(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_poi_faces_poi ON poi_faces(poi_id);
             """
         )
         # Lightweight migrations for databases created by earlier NETRA builds.
@@ -444,3 +466,129 @@ def audit_history(search: str = "", username: str = "", action: str = "", date_f
 def users_for_filter() -> list[Dict[str, Any]]:
     with connection() as conn:
         return [dict(r) for r in conn.execute("SELECT id,username,role,is_active,created_at FROM users ORDER BY username").fetchall()]
+
+
+def _poi_face_public(row, include_embedding: bool = False) -> Dict[str, Any]:
+    data = dict(row)
+    face = {
+        "face_id": data["id"],
+        "poi_id": data["poi_id"],
+        "file_name": data.get("file_name"),
+        "image_url": f"/poi/{data['poi_id']}/faces/{data['id']}/image",
+        "detect_score": data.get("detect_score"),
+        "bbox": json.loads(data["bbox_json"]) if data.get("bbox_json") else None,
+        "created_at": data.get("created_at"),
+    }
+    if include_embedding:
+        face["embedding"] = data.get("embedding")
+    return face
+
+
+def list_pois(enabled_only: bool = False) -> List[Dict[str, Any]]:
+    with connection() as conn:
+        if enabled_only:
+            persons = conn.execute(
+                "SELECT * FROM poi_persons WHERE enabled=1 ORDER BY created_at DESC"
+            ).fetchall()
+        else:
+            persons = conn.execute(
+                "SELECT * FROM poi_persons ORDER BY created_at DESC"
+            ).fetchall()
+        out: List[Dict[str, Any]] = []
+        for person in persons:
+            faces = conn.execute(
+                "SELECT id,poi_id,file_name,detect_score,bbox_json,created_at FROM poi_faces WHERE poi_id=? ORDER BY created_at",
+                (person["id"],),
+            ).fetchall()
+            item = dict(person)
+            item["enabled"] = bool(item.get("enabled"))
+            item["faces"] = [_poi_face_public(f) for f in faces]
+            item["face_count"] = len(item["faces"])
+            out.append(item)
+        return out
+
+
+def get_poi(poi_id: str) -> Optional[Dict[str, Any]]:
+    with connection() as conn:
+        person = conn.execute("SELECT * FROM poi_persons WHERE id=?", (poi_id,)).fetchone()
+        if person is None:
+            return None
+        faces = conn.execute(
+            "SELECT id,poi_id,file_name,detect_score,bbox_json,created_at FROM poi_faces WHERE poi_id=? ORDER BY created_at",
+            (poi_id,),
+        ).fetchall()
+        item = dict(person)
+        item["enabled"] = bool(item.get("enabled"))
+        item["faces"] = [_poi_face_public(f) for f in faces]
+        item["face_count"] = len(item["faces"])
+        return item
+
+
+def get_poi_face(poi_id: str, face_id: str) -> Optional[Dict[str, Any]]:
+    with connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM poi_faces WHERE id=? AND poi_id=?",
+            (face_id, poi_id),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def create_poi(*, poi_id: str, name: str, notes: str = "", created_by: Optional[int] = None, enabled: bool = True) -> Dict[str, Any]:
+    now = _now()
+    with connection() as conn:
+        conn.execute(
+            "INSERT INTO poi_persons(id,name,notes,enabled,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+            (poi_id, name.strip(), notes or "", 1 if enabled else 0, created_by, now, now),
+        )
+    return get_poi(poi_id) or {"id": poi_id, "name": name}
+
+
+def add_poi_face(*, face_id: str, poi_id: str, file_path: str, file_name: str, embedding: bytes, detect_score: Optional[float] = None, bbox: Optional[list] = None) -> Dict[str, Any]:
+    with connection() as conn:
+        count = conn.execute("SELECT COUNT(*) FROM poi_faces WHERE poi_id=?", (poi_id,)).fetchone()[0]
+        if count >= 2:
+            raise ValueError("Each person-of-interest can store at most 2 face images.")
+        conn.execute(
+            "INSERT INTO poi_faces(id,poi_id,file_path,file_name,embedding,detect_score,bbox_json,created_at) VALUES(?,?,?,?,?,?,?,?)",
+            (face_id, poi_id, file_path, file_name, embedding, detect_score, json.dumps(bbox) if bbox is not None else None, _now()),
+        )
+        conn.execute("UPDATE poi_persons SET updated_at=? WHERE id=?", (_now(), poi_id))
+    face = get_poi_face(poi_id, face_id)
+    return _poi_face_public(face) if face else {"face_id": face_id, "poi_id": poi_id}
+
+
+def delete_poi(poi_id: str) -> bool:
+    with connection() as conn:
+        faces = conn.execute("SELECT file_path FROM poi_faces WHERE poi_id=?", (poi_id,)).fetchall()
+        paths = [r["file_path"] for r in faces]
+        cur = conn.execute("DELETE FROM poi_persons WHERE id=?", (poi_id,))
+        deleted = cur.rowcount > 0
+    for path in paths:
+        try:
+            if path and os.path.isfile(path):
+                os.remove(path)
+        except OSError:
+            pass
+    folder = os.path.join(Config.POI_GALLERY_DIR, poi_id)
+    try:
+        if os.path.isdir(folder) and not os.listdir(folder):
+            os.rmdir(folder)
+    except OSError:
+        pass
+    return deleted
+
+
+def list_poi_embeddings() -> List[Dict[str, Any]]:
+    with connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT f.id AS face_id, f.poi_id, f.embedding, p.name
+            FROM poi_faces f
+            JOIN poi_persons p ON p.id = f.poi_id
+            WHERE p.enabled = 1
+            """
+        ).fetchall()
+        return [
+            {"face_id": r["face_id"], "poi_id": r["poi_id"], "name": r["name"], "embedding": r["embedding"]}
+            for r in rows
+        ]

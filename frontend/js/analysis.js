@@ -159,6 +159,7 @@ window.NetraAnalysis = {
   EVENT_LABELS: {
     weapon: { title: 'WEAPON', color: '#9B3B2E' },
     plate: { title: 'PLATE', color: '#2E6B9B' },
+    face: { title: 'PERSON OF INTEREST', color: '#C46A1A' },
     anomaly: { title: 'ANOMALY', color: '#9B7A2E' },
     violence: { title: 'VIOLENCE', color: '#9B3B2E' },
   },
