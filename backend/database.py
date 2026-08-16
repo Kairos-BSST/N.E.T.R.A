@@ -1,6 +1,4 @@
-"""SQLite persistence for authentication, jobs, evidence and audit history."""
 from __future__ import annotations
-
 import hashlib
 import json
 import os
@@ -9,9 +7,7 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
-
 from config import Config
-
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -154,7 +150,6 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_poi_faces_poi ON poi_faces(poi_id);
             """
         )
-        # Lightweight migrations for databases created by earlier NETRA builds.
         _ensure_column(conn, "analysis_jobs", "local_path", "TEXT")
         _ensure_column(conn, "analysis_jobs", "video_info_json", "TEXT")
         _ensure_default_user(conn, Config.ADMIN_USERNAME, Config.ADMIN_PASSWORD, "administrator")
