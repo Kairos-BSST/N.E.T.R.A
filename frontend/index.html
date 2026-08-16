@@ -244,8 +244,9 @@ Caps Lock is on
 <button class="btn btn-live" id="liveConnectBtn" type="button">CONNECT</button>
 <button class="btn btn-ghost" disabled="" id="liveDisconnectBtn" type="button">DISCONNECT</button>
 <button class="btn btn-live" disabled="" id="liveStartBtn" type="button">START MONITORING</button>
-<button class="btn btn-ghost" disabled="" id="liveStopBtn" type="button">STOP MONITORING</button>
+<button class="btn btn-stop" disabled="" id="liveStopBtn" type="button">STOP MONITORING</button>
 </div>
+<p class="side-note" id="liveMonitorHint" style="margin-top:10px;">Start Monitoring runs AI detections. Stop Monitoring freezes the report — no new events after that click.</p>
 <div class="frame" id="liveFrame">
 <div class="live-tag" id="liveTag">LIVE</div>
 <img alt="Live processed feed" hidden="" id="liveStreamImg"/>
@@ -321,6 +322,7 @@ Caps Lock is on
           Every source (live CCTV, local upload, Drive) feeds the shared VideoSource → frame_processor path. Connect a live feed and start monitoring to see annotated frames here.
         </p>
 <div class="analysis-meta" id="analysisMeta">job — · source —</div>
+<button class="btn btn-stop analysis-stop-btn" hidden="" id="analysisStopBtn" type="button">STOP ANALYSIS</button>
 </div>
 <div class="report-block">
 <div class="panel-label">EVENT REPORT / TIMELINE</div>
@@ -476,9 +478,9 @@ Caps Lock is on
 </div>
 </div><!-- /app-main -->
 </div>
-<script src="/js/analysis.js?v=12"></script>
+<script src="/js/analysis.js?v=13"></script>
 <script src="/js/alerts.js?v=10"></script>
-<script src="/js/live.js?v=10"></script>
+<script src="/js/live.js?v=11"></script>
 <script src="/js/upload.js?v=10"></script>
 <script src="/js/drive.js?v=10"></script>
 <script src="/js/history.js?v=10"></script>

@@ -6,6 +6,8 @@ window.NetraAnalysis = {
   _events: [],
   _videoInfo: null,
   _activeOverlayEvent: null,
+  _currentJob: null,
+  _stopBound: false,
 
   showVideoPreview(file) {
     const block = document.getElementById('videoPreviewBlock');
@@ -127,6 +129,7 @@ window.NetraAnalysis = {
         analysisMsg.textContent = opts.error;
       }
       analysisMeta.textContent = 'job — · source —';
+      this.updateStopButton(null);
       return;
     }
 
@@ -134,7 +137,7 @@ window.NetraAnalysis = {
     analysisPill.classList.add('active');
     const status = (job.status || '').toLowerCase();
     if (status === 'processing' || status === 'starting') {
-      analysisPillText.textContent = 'AI PROCESSING' + (job.progress ? ` · ${job.progress.toFixed(0)}%` : '');
+      analysisPillText.textContent = 'AI PROCESSING' + (job.progress != null ? ` · ${Number(job.progress).toFixed(0)}%` : '');
     } else if (status === 'connected') {
       analysisPillText.textContent = 'SOURCE CONNECTED';
     } else if (status === 'completed') {
@@ -149,6 +152,94 @@ window.NetraAnalysis = {
       || 'Accepted for analysis via the shared frame_processor pipeline.';
     const shortId = (job.job_id || '—').slice(0, 8);
     analysisMeta.textContent = `job ${shortId}… · source ${job.source || '—'} · status ${job.status || '—'}`;
+    this._currentJob = job;
+    this.updateStopButton(job);
+  },
+
+  _ensureStopButton() {
+    if (this._stopBound) return;
+    const btn = document.getElementById('analysisStopBtn');
+    if (!btn) return;
+    btn.addEventListener('click', () => this.stopCurrentAnalysis());
+    this._stopBound = true;
+  },
+
+  updateStopButton(job) {
+    this._ensureStopButton();
+    const btn = document.getElementById('analysisStopBtn');
+    if (!btn) return;
+    if (!job || !job.job_id) {
+      btn.hidden = true;
+      btn.disabled = true;
+      return;
+    }
+    const status = (job.status || '').toLowerCase();
+    const active = status === 'processing' || status === 'starting' || status === 'queued';
+    btn.hidden = !active;
+    btn.disabled = !active;
+    btn.textContent = 'STOP ANALYSIS';
+  },
+
+  async stopCurrentAnalysis() {
+    const job = this._currentJob;
+    if (!job?.job_id) return;
+
+    const btn = document.getElementById('analysisStopBtn');
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'STOPPING…';
+    }
+
+    const stopMessage = 'Analysis stopped — report covers detections until Stop was clicked.';
+
+    try {
+      const source = (job.source || '').toLowerCase();
+      if (source === 'live') {
+        const res = await fetch('/live/stop', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: '{}',
+        });
+        let body = null;
+        try {
+          body = await res.json();
+        } catch (_) {}
+        if (!res.ok) {
+          const detail = body && body.detail;
+          throw new Error(typeof detail === 'string' ? detail : `Stop failed (${res.status})`);
+        }
+        this._currentJob = {
+          job_id: job.job_id,
+          source: 'live',
+          status: 'completed',
+          message: stopMessage,
+        };
+        this.updateStopButton(this._currentJob);
+        this.startPolling(this._currentJob);
+        return;
+      }
+
+      const res = await fetch(`/analysis/jobs/${job.job_id}/stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      let body = null;
+      try {
+        body = await res.json();
+      } catch (_) {}
+      if (!res.ok) {
+        const detail = body && body.detail;
+        throw new Error(typeof detail === 'string' ? detail : `Stop failed (${res.status})`);
+      }
+      const updated = (body && body.job) || { ...job, status: 'completed', message: stopMessage };
+      this._currentJob = updated;
+      this.updateStopButton(updated);
+      this.startPolling(updated);
+    } catch (err) {
+      this.setState(job, { error: err.message || 'Could not stop analysis.' });
+      if (btn) this.updateStopButton(job);
+    }
   },
 
   /* ---- report / timeline ---- */
@@ -295,6 +386,7 @@ window.NetraAnalysis = {
           clearInterval(this._pollTimer);
           this._pollTimer = null;
           this.renderSummary(report);
+          this.updateStopButton(report);
         }
       } catch (err) {
         // transient network hiccup — keep polling silently

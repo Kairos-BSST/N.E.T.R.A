@@ -163,9 +163,9 @@ window.NetraLive = {
           source: 'live',
           status: live.processing_status || live.connection_status,
           message: monitoring
-            ? 'Live frames flowing through shared AI frame_processor.'
+            ? 'Live frames flowing through shared AI frame_processor. Click Stop Monitoring to close the report.'
             : connected
-              ? 'Live preview streaming. Start monitoring to run inference.'
+              ? 'Live preview streaming. Start monitoring to run inference and log detections.'
               : 'Live source idle.',
         });
       }
@@ -302,17 +302,41 @@ window.NetraLive = {
         applyStatus(body.live);
         startFramePoll();
         startPolling();
+        if (body.live && body.live.job_id && window.NetraAnalysis) {
+          window.NetraAnalysis.startPolling({
+            job_id: body.live.job_id,
+            source: 'live',
+            status: 'processing',
+            message: 'Monitoring started — detections log until you click Stop Monitoring.',
+          });
+        }
       } catch (err) {
         showError(err.message);
       }
     });
 
     stopBtn.addEventListener('click', async () => {
+      stopBtn.disabled = true;
+      stopBtn.textContent = 'STOPPING…';
       try {
-        const body = await api('/live/stop', { method: 'POST', body: '{}' });
-        applyStatus(body.live);
+        const liveStatus = await api('/live/status');
+        if (window.NetraAnalysis && liveStatus.job_id) {
+          window.NetraAnalysis._currentJob = {
+            job_id: liveStatus.job_id,
+            source: 'live',
+            status: 'processing',
+          };
+          await window.NetraAnalysis.stopCurrentAnalysis();
+        } else {
+          await api('/live/stop', { method: 'POST', body: '{}' });
+        }
+        applyStatus(await api('/live/status'));
+        liveMsg.style.display = 'flex';
+        liveMsg.textContent = 'MONITORING STOPPED — preview only (no new detections)';
       } catch (err) {
         showError(err.message);
+      } finally {
+        stopBtn.textContent = 'STOP MONITORING';
       }
     });
 

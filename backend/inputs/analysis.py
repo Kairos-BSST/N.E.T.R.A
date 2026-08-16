@@ -42,6 +42,26 @@ def list_analysis_jobs(user=Depends(current_user)):
 def get_analysis_job(job_id: str, user=Depends(current_user)):
     return _authorized_job(job_id, user)
 
+@router.post("/analysis/jobs/{job_id}/stop")
+def stop_analysis_job(job_id: str, user=Depends(current_user)):
+    job = _authorized_job(job_id, user)
+    status = (job.get("status") or "").lower()
+    if status in {"completed", "failed"}:
+        return {"status": job.get("status"), "job": job}
+    try:
+        updated = analysis_pipeline.stop_analysis(job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    database.record_audit(
+        user["id"],
+        "ANALYSIS_STOPPED",
+        job_id=job_id,
+        resource_type="analysis",
+        resource_id=job_id,
+        details={"source": updated.get("source"), "status": updated.get("status")},
+    )
+    return {"status": "stopped", "job": updated}
+
 @router.get("/analysis/jobs/{job_id}/report")
 def get_analysis_report(job_id: str, user=Depends(current_user)):
     job = _authorized_job(job_id, user)

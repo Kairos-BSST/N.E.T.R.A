@@ -1429,6 +1429,7 @@
   .btn-live{ background:var(--live); color:#fff; }
   .btn-upload{ background:var(--upload); color:#fff; }
   .btn-drive{ background:var(--drive); color:#fff; }
+  .btn-stop{ background:#9B3B2E; color:#fff; border-color:#9B3B2E; }
   .btn-ghost{
     background:transparent;
     color:var(--text);
@@ -1585,6 +1586,9 @@
     font-size:10.5px;
     letter-spacing:0.04em;
     color:var(--muted-2);
+  }
+  .analysis-stop-btn{
+    margin-top:14px;
   }
 
   @media (prefers-reduced-motion: reduce){

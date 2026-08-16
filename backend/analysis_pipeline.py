@@ -36,6 +36,26 @@ def _get_analysis_fps(source_fps: float) -> float:
 _lock = threading.RLock()
 _jobs: Dict[str, dict] = {}
 _workers: Dict[str, threading.Thread] = {}
+_cancel_flags: Dict[str, threading.Event] = {}
+
+
+def _cancel_event(job_id: str) -> threading.Event:
+    with _lock:
+        event = _cancel_flags.get(job_id)
+        if event is None:
+            event = threading.Event()
+            _cancel_flags[job_id] = event
+        return event
+
+
+def _is_cancelled(job_id: str) -> bool:
+    event = _cancel_flags.get(job_id)
+    return bool(event and event.is_set())
+
+
+def _clear_cancel(job_id: str) -> None:
+    with _lock:
+        _cancel_flags.pop(job_id, None)
 
 # Helpers
 def _utc_now() -> str:
@@ -312,9 +332,56 @@ def start_file_analysis(job_id: str) -> dict:
 
         _workers[job_id] = worker
 
+        _clear_cancel(job_id)
         worker.start()
 
         return _safe_job_copy(job)
+
+
+def stop_analysis(job_id: str) -> dict:
+    """Request early stop for upload/drive file analysis; report covers work until this call."""
+    with _lock:
+        job = _jobs.get(job_id)
+        if job is None:
+            job = database.get_job(job_id)
+            if job is not None:
+                _jobs[job_id] = job
+        if job is None:
+            raise ValueError(f"Unknown analysis job: {job_id}")
+
+        status = (job.get("status") or "").lower()
+        if status in {"completed", "failed"}:
+            return _safe_job_copy(job)
+
+        _cancel_event(job_id).set()
+
+        if status in {"queued", "starting"}:
+            job.update({
+                "status": "completed",
+                "message": "Analysis stopped before processing began.",
+                "progress": 100.0,
+                "completed_at": _utc_now(),
+                "result": {
+                    "frames_processed": 0,
+                    "processing_seconds": 0.0,
+                    "total_detections": 0,
+                    "weapon_detections": 0,
+                    "plate_detections": 0,
+                    "anomaly_frames": 0,
+                    "fight_frames": 0,
+                    "plates_found": [],
+                    "ended_by": "stop_analysis",
+                },
+            })
+            job["updated_at"] = _utc_now()
+            database.record_job(job)
+            return _safe_job_copy(job)
+
+        update_job(
+            job_id,
+            message="Stop requested — finishing current frame, then closing the report.",
+        )
+        return get_job(job_id) or _safe_job_copy(job)
 
 
 def _file_analysis_worker(job_id: str) -> None:
@@ -388,6 +455,31 @@ def _file_analysis_worker(job_id: str) -> None:
         )
         frame_processor.wait_for_models()
         print("[ANALYSIS] Background AI models are ready.", flush=True)
+
+    if _is_cancelled(job_id):
+        update_job(
+            job_id,
+            status="completed",
+            message="Analysis stopped before processing began.",
+            progress=100.0,
+            completed_at=_utc_now(),
+            result={
+                "frames_processed": 0,
+                "processing_seconds": round(time.perf_counter() - started, 2),
+                "total_detections": 0,
+                "weapon_detections": 0,
+                "plate_detections": 0,
+                "anomaly_frames": 0,
+                "fight_frames": 0,
+                "plates_found": [],
+                "ended_by": "stop_analysis",
+            },
+            error=None,
+        )
+        _clear_cancel(job_id)
+        with _lock:
+            _workers.pop(job_id, None)
+        return
 
     processor = frame_processor.FrameProcessor(label=source_label)
 
@@ -474,7 +566,13 @@ def _file_analysis_worker(job_id: str) -> None:
 
         print(f"[ANALYSIS] Starting frame loop: {source_label}", flush=True)
 
+        stopped_by_user = False
+
         while True:
+            if _is_cancelled(job_id):
+                stopped_by_user = True
+                print("[ANALYSIS] Stop requested — closing report for processed frames.", flush=True)
+                break
 
             ok, frame = cap.read()
 
@@ -582,6 +680,8 @@ def _file_analysis_worker(job_id: str) -> None:
             video_time = source_video_time
 
             def _log_event(event_type, label, confidence_val, extra_fields=None, snap_dets=None):
+                if _is_cancelled(job_id):
+                    return
                 event_id = uuid.uuid4().hex[:12]
                 snapshot_url = _save_snapshot(
                     job_id, event_id, frame, detections=snap_dets
@@ -778,7 +878,7 @@ def _file_analysis_worker(job_id: str) -> None:
             - started
         )
 
-        if frames_processed == 0:
+        if frames_processed == 0 and not stopped_by_user:
             raise RuntimeError(
                 "Video opened but no frames could be read."
             )
@@ -814,6 +914,8 @@ def _file_analysis_worker(job_id: str) -> None:
             "plates_found": list(plates_seen.values()),
             "annotated_video_url": annotated_rel_url,
         }
+        if stopped_by_user:
+            result["ended_by"] = "stop_analysis"
 
         if out_path and os.path.isfile(out_path):
             try:
@@ -824,8 +926,15 @@ def _file_analysis_worker(job_id: str) -> None:
             except Exception:
                 logger.exception("Could not persist annotated video evidence for job_id=%s", job_id)
 
+        completion_message = (
+            "Analysis stopped. Report includes detections until Stop was clicked."
+            if stopped_by_user
+            else "Video analysis completed."
+        )
+
         print(
-            f"[ANALYSIS] COMPLETE: {frames_processed} AI frames"
+            f"[ANALYSIS] {'STOPPED' if stopped_by_user else 'COMPLETE'}:"
+            f" {frames_processed} AI frames"
             f" sampled from {source_frame_number} source frames in {elapsed_seconds:.2f}s",
             flush=True,
         )
@@ -833,7 +942,7 @@ def _file_analysis_worker(job_id: str) -> None:
         update_job(
             job_id,
             status="completed",
-            message="Video analysis completed.",
+            message=completion_message,
             progress=100.0,
             frames_processed=frames_processed,
             completed_at=_utc_now(),
@@ -843,32 +952,34 @@ def _file_analysis_worker(job_id: str) -> None:
         )
 
         logger.info(
-            "Analysis completed job_id=%s frames=%s seconds=%.2f plates=%s",
+            "Analysis completed job_id=%s frames=%s seconds=%.2f plates=%s stopped=%s",
             job_id,
             frames_processed,
             elapsed_seconds,
             len(plates_seen),
+            stopped_by_user,
         )
 
     except Exception as exc:
-        
-        print(f"[ANALYSIS] ERROR: {type(exc).__name__}: {exc}", flush=True)
-
-        logger.exception(
-            "File analysis failed job_id=%s",
-            job_id,
-        )
-
-        update_job(
-            job_id,
-            status="failed",
-            message=f"Video analysis failed: {exc}",
-            error=str(exc),
-            frames_processed=frames_processed,
-            completed_at=_utc_now(),
-        )
+        if _is_cancelled(job_id):
+            print(f"[ANALYSIS] Stop during error handling: {exc}", flush=True)
+        else:
+            print(f"[ANALYSIS] ERROR: {type(exc).__name__}: {exc}", flush=True)
+            logger.exception(
+                "File analysis failed job_id=%s",
+                job_id,
+            )
+            update_job(
+                job_id,
+                status="failed",
+                message=f"Video analysis failed: {exc}",
+                error=str(exc),
+                frames_processed=frames_processed,
+                completed_at=_utc_now(),
+            )
 
     finally:
+        _clear_cancel(job_id)
 
         if writer is not None:
             try:

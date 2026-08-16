@@ -34,6 +34,8 @@ class LiveMonitor:
         self._error_code: Optional[str] = None
         self._resolution = "—"
         self._job_id: Optional[str] = None
+        self._user_id: Optional[int] = None
+        self._source_kind: Optional[str] = None
         self._latest_jpeg: Optional[bytes] = None
         self._latest_meta: Dict[str, Any] = {}
         self._source_label = "—"
@@ -48,6 +50,8 @@ class LiveMonitor:
         self._last_plate_key: Optional[str] = None
         self._last_face_key: Optional[str] = None
         self._loop_started_monotonic = 0.0
+        self._session_started_monotonic = 0.0
+        self._session_frames = 0
 
     def connect(self, source: VideoSource, user_id: Optional[int] = None) -> Dict[str, Any]:
         with self._lock:
@@ -78,22 +82,14 @@ class LiveMonitor:
             self._monitoring = False
             self._processing_status = "preview"
             self._source_label = source.label
+            self._source_kind = source.source_kind
+            self._user_id = user_id
             self._resolution = self._read_resolution(source)
+            self._job_id = None
+            self._session_frames = 0
+            self._session_started_monotonic = 0.0
 
             self._processor = frame_processor.FrameProcessor(label=source.label)
-
-            analysis = analysis_pipeline.queue_for_analysis(
-                source=analysis_pipeline.SOURCE_LIVE,
-                stream_url=source.label,
-                original_name=source.label,
-                extra={"source_kind": source.source_kind, "user_id": user_id},
-            )
-            self._job_id = analysis.get("job_id")
-            analysis_pipeline.update_job(
-                self._job_id,
-                status="connected",
-                message=f"Live source connected: {source.label}. Preview streaming.",
-            )
 
             self._stop_event.clear()
             self._thread = threading.Thread(
@@ -107,6 +103,7 @@ class LiveMonitor:
 
     def disconnect(self) -> Dict[str, Any]:
         with self._lock:
+            was_monitoring = self._monitoring
             self._stop_loop_unlocked(join=True)
             self._release_source_unlocked()
             self._connected = False
@@ -117,12 +114,18 @@ class LiveMonitor:
             self._resolution = "—"
             self._fps = 0.0
             self._latest_jpeg = None
-            if self._job_id:
-                analysis_pipeline.update_job(
-                    self._job_id,
-                    status="disconnected",
-                    message="Live source disconnected.",
+            if self._job_id and was_monitoring:
+                self._finalize_session_unlocked(
+                    message="Live source disconnected — monitoring session closed. Report covers detections until disconnect."
                 )
+            elif self._job_id:
+                job = analysis_pipeline.get_job(self._job_id)
+                if job and job.get("status") not in {"completed", "failed"}:
+                    analysis_pipeline.update_job(
+                        self._job_id,
+                        status="disconnected",
+                        message="Live source disconnected.",
+                    )
             return self.status()
 
     def start_monitoring(self) -> Dict[str, Any]:
@@ -132,33 +135,130 @@ class LiveMonitor:
                     "No live source connected. Connect before starting monitoring.",
                     code="not_connected",
                 )
+
+            # Each Start→Stop cycle is one reportable session.
+            needs_new_job = True
+            if self._job_id:
+                existing = analysis_pipeline.get_job(self._job_id)
+                if existing and existing.get("status") == "processing":
+                    needs_new_job = False
+
+            if needs_new_job:
+                analysis = analysis_pipeline.queue_for_analysis(
+                    source=analysis_pipeline.SOURCE_LIVE,
+                    stream_url=self._source_label,
+                    original_name=self._source_label,
+                    extra={
+                        "source_kind": self._source_kind,
+                        "user_id": self._user_id,
+                    },
+                )
+                self._job_id = analysis.get("job_id")
+
+            self._reset_detection_state_unlocked()
+            self._session_started_monotonic = time.perf_counter()
+            self._session_frames = 0
             self._monitoring = True
             self._processing_status = "processing"
             self._error = None
             self._error_code = None
-            if self._job_id:
-                analysis_pipeline.update_job(
-                    self._job_id,
-                    status="processing",
-                    message="AI monitoring on — frames flowing through shared frame_processor.",
-                )
+            analysis_pipeline.update_job(
+                self._job_id,
+                status="processing",
+                started_at=analysis_pipeline._utc_now(),
+                message="AI monitoring on — detections and report events run until Stop Monitoring.",
+            )
             return self.status()
 
     def stop_monitoring(self, join: bool = False) -> Dict[str, Any]:
         # join kept for API compat; capture loop keeps running while connected.
         with self._lock:
+            was_monitoring = self._monitoring
             self._monitoring = False
+            if was_monitoring and self._job_id:
+                self._finalize_session_unlocked(
+                    message="Monitoring stopped. Report includes detections until Stop was clicked."
+                )
             if self._connected:
                 self._processing_status = "preview"
-                if self._job_id:
-                    analysis_pipeline.update_job(
-                        self._job_id,
-                        status="connected",
-                        message="AI monitoring stopped. Live preview still running.",
-                    )
             elif self._processing_status == "processing":
                 self._processing_status = "idle"
             return self.status()
+
+    def _reset_detection_state_unlocked(self) -> None:
+        self._active_state = {
+            "weapon": False,
+            "plate": False,
+            "anomaly": False,
+            "violence": False,
+            "face": False,
+        }
+        self._last_plate_key = None
+        self._last_face_key = None
+
+    def _finalize_session_unlocked(self, *, message: str) -> None:
+        """Mark the active live job completed so the PDF/report covers this session only."""
+        job_id = self._job_id
+        if not job_id:
+            return
+        job = analysis_pipeline.get_job(job_id) or {}
+        if job.get("status") in {"completed", "failed"}:
+            return
+
+        events = job.get("events") or []
+        plates_seen: Dict[str, Any] = {}
+        weapon_detections = 0
+        plate_detections = 0
+        anomaly_frames = 0
+        fight_frames = 0
+        face_detections = 0
+        for ev in events:
+            et = (ev.get("type") or "").lower()
+            if et == "weapon":
+                weapon_detections += 1
+            elif et == "plate":
+                plate_detections += 1
+                plate = (ev.get("plate_number") or ev.get("label") or "").strip()
+                if plate:
+                    plates_seen[plate.upper()] = {
+                        "plate_number": plate,
+                        "confidence": ev.get("confidence"),
+                    }
+            elif et == "anomaly":
+                anomaly_frames += 1
+            elif et == "violence":
+                fight_frames += 1
+            elif et == "face":
+                face_detections += 1
+
+        started = self._session_started_monotonic or time.perf_counter()
+        processing_seconds = max(0.0, time.perf_counter() - started)
+        frames_processed = int(self._session_frames or 0)
+
+        result = {
+            "frames_processed": frames_processed,
+            "processing_seconds": round(processing_seconds, 2),
+            "total_detections": len(events),
+            "weapon_detections": weapon_detections,
+            "plate_detections": plate_detections,
+            "anomaly_frames": anomaly_frames,
+            "fight_frames": fight_frames,
+            "face_detections": face_detections,
+            "plates_found": list(plates_seen.values()),
+            "source": "live",
+            "ended_by": "stop_monitoring",
+        }
+
+        analysis_pipeline.update_job(
+            job_id,
+            status="completed",
+            message=message,
+            progress=100.0,
+            frames_processed=frames_processed,
+            completed_at=analysis_pipeline._utc_now(),
+            result=result,
+            error=None,
+        )
 
     # Status / frames
     def status(self) -> Dict[str, Any]:
@@ -233,15 +333,22 @@ class LiveMonitor:
 
     def _emit_live_events(self, frame, meta: Dict[str, Any], label: str) -> None:
         """Translate live frame meta into analysis events → alerting."""
-        job_id = self._job_id
-        if not job_id or not meta:
+        with self._lock:
+            job_id = self._job_id
+            monitoring = self._monitoring
+        if not job_id or not meta or not monitoring:
+            return
+
+        job = analysis_pipeline.get_job(job_id) or {}
+        if job.get("status") in {"completed", "failed", "disconnected"}:
             return
 
         import uuid
         from datetime import datetime, timezone
 
         frame_h, frame_w = frame.shape[:2]
-        video_time = max(0.0, time.perf_counter() - (self._loop_started_monotonic or time.perf_counter()))
+        session_t0 = self._session_started_monotonic or self._loop_started_monotonic or time.perf_counter()
+        video_time = max(0.0, time.perf_counter() - session_t0)
 
         def _snapshot_dets(*extra):
             dets = []
@@ -445,10 +552,27 @@ class LiveMonitor:
                     annotated, meta = self._processor.process_frame(
                         frame, source_label=label, draw=True
                     )
-                    try:
-                        self._emit_live_events(frame, meta, label)
-                    except Exception:
-                        logger.exception("Live alert emit failed")
+                    with self._lock:
+                        still_on = self._monitoring and self._job_id is not None
+                    if still_on:
+                        try:
+                            self._emit_live_events(frame, meta, label)
+                        except Exception:
+                            logger.exception("Live alert emit failed")
+                    else:
+                        # Stop clicked mid-inference — show preview label, no new events.
+                        annotated = frame.copy()
+                        cv2.putText(
+                            annotated,
+                            f"PREVIEW  {label}",
+                            (12, 28),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.7,
+                            (63, 232, 208),
+                            2,
+                            cv2.LINE_AA,
+                        )
+                        meta = {}
                 else:
                     annotated = frame.copy()
                     cv2.putText(
@@ -475,6 +599,8 @@ class LiveMonitor:
             self._store_jpeg(annotated)
             with self._lock:
                 self._frame_count += 1
+                if ai_on:
+                    self._session_frames += 1
                 self._latest_meta = meta
                 window_frames += 1
                 elapsed = time.perf_counter() - window_t0
