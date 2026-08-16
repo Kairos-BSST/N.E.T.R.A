@@ -1,16 +1,3 @@
-# NOTE: this used to pin the CPU-only PyTorch build via
-# --extra-index-url https://download.pytorch.org/whl/cpu -- removed
-# because CSRNet is now asked to use CUDA when available. Weapon/OCR/
-# anomaly/violence still run on CPU by design (DEVICE="cpu" in
-# frame_processor.py), only CSRNet's own loader queries
-# torch.cuda.is_available() independently.
-#
-# Install a CUDA-matching torch build yourself before installing this
-# file, e.g. (check your CUDA version first):
-#   pip install torch>=2.1.0 torchvision>=0.16.0 --index-url https://download.pytorch.org/whl/cu121
-# then run: pip install -r requirements.txt
-# so pip doesn't overwrite it with a CPU-only wheel.
-
 python-dotenv>=1.0.0
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
@@ -29,7 +16,4 @@ paddleocr>=2.7.0
 paddlepaddle>=2.5.0
 albumentations>=1.3.0
 reportlab>=4.0.0
-
-# Dev/test only
-pytest>=8.0.0
-httpx>=0.27.0
+lwcc>=0.0.7
