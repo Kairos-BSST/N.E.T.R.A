@@ -1,10 +1,7 @@
-"""Person-of-interest gallery: enroll faces (max 2 images) and serve stored photos."""
 from __future__ import annotations
-
 import os
 import uuid
 from typing import List, Optional
-
 import cv2
 import numpy as np
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -24,13 +21,11 @@ ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 MAX_IMAGES_PER_UPLOAD = 2
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
 
-
 def _reload_gallery() -> None:
     try:
         face_reid.reload_gallery(database.list_poi_embeddings())
     except Exception:
         pass
-
 
 def _decode_upload(data: bytes) -> np.ndarray:
     arr = np.frombuffer(data, dtype=np.uint8)
@@ -38,7 +33,6 @@ def _decode_upload(data: bytes) -> np.ndarray:
     if image is None or image.size == 0:
         raise HTTPException(status_code=400, detail="Could not decode image. Use JPG/PNG.")
     return image
-
 
 def _safe_ext(filename: str, content_type: Optional[str]) -> str:
     ext = os.path.splitext(filename or "")[1].lower()
@@ -50,7 +44,6 @@ def _safe_ext(filename: str, content_type: Optional[str]) -> str:
         return ".webp"
     return ".jpg"
 
-
 def _upload_list(images) -> List[UploadFile]:
     if images is None:
         return []
@@ -59,7 +52,6 @@ def _upload_list(images) -> List[UploadFile]:
     else:
         items = list(images)
     return [f for f in items if f is not None and getattr(f, "filename", None)]
-
 
 @router.get("/poi")
 def list_poi(user=Depends(current_user)):
@@ -70,7 +62,6 @@ def list_poi(user=Depends(current_user)):
         "max_images_per_person": MAX_IMAGES_PER_UPLOAD,
     }
 
-
 @router.get("/poi/{poi_id}")
 def get_poi(poi_id: str, user=Depends(current_user)):
     _ = user
@@ -78,7 +69,6 @@ def get_poi(poi_id: str, user=Depends(current_user)):
     if item is None:
         raise HTTPException(status_code=404, detail="Person-of-interest not found.")
     return item
-
 
 @router.post("/poi")
 async def create_poi(

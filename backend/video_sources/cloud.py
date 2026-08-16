@@ -1,20 +1,8 @@
-"""
-CloudSource — frames from a cloud-fetched local copy (e.g. Google Drive).
-
-After Drive / cloud download lands on disk, wrap the path so the AI
-pipeline consumes frames through the same VideoSource interface.
-"""
-
 from __future__ import annotations
-
 from typing import Optional
-
 from video_sources.file_source import FileSource
 
-
 class CloudSource(FileSource):
-    """Identical frame API to FileSource; labeled as a cloud-origin feed."""
-
     source_kind = "cloud"
 
     def __init__(

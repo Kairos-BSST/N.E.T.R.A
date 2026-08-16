@@ -1,16 +1,3 @@
-"""
-drive_client.py
------------------
-Wraps the Google Drive v3 API. Given a Credentials object (obtained via
-drive_auth.py), this handles:
-
-    - list_video_files()  -> files().list with a video mimeType filter
-    - download_file()     -> files().get_media, streamed to disk in chunks
-
-Only this file talks to googleapiclient directly, mirroring the same
-isolation pattern as gcs_client.py for GCS.
-"""
-
 import io
 import logging
 import os
@@ -21,9 +8,7 @@ from google.oauth2.credentials import Credentials
 
 logger = logging.getLogger("netra.drive_client")
 
-# Drive stores video mimeTypes like video/mp4, video/quicktime, video/x-matroska, etc.
 VIDEO_MIME_QUERY = "mimeType contains 'video/' and trashed = false"
-
 
 class DriveClient:
     def __init__(self, credentials: Credentials):

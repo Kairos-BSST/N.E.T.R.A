@@ -1,13 +1,3 @@
-"""
-live_monitor.py
----------------
-Session manager for Live CCTV / webcam streams.
-
-While connected, a background loop continuously grabs frames so the
-dashboard shows live video (not a single still). Start Monitoring turns
-on shared AI inference via frame_processor.process_frame.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -47,18 +37,7 @@ class LiveMonitor:
         self._latest_jpeg: Optional[bytes] = None
         self._latest_meta: Dict[str, Any] = {}
         self._source_label = "—"
-
-        # This session's own AI pipeline state (frame counter, last
-        # detections, violence buffer, scene-change baseline) -- created
-        # fresh on every connect() so a new live session never inherits
-        # stale state from whatever was connected before it, and so this
-        # doesn't collide with any file-upload job's FrameProcessor
-        # running concurrently. See frame_processor.FrameProcessor.
         self._processor = frame_processor.FrameProcessor(label="live")
-
-        # Edge-trigger flags so live detections emit one alert per
-        # appearance (same semantics as file analysis), then ride the
-        # Sub-5s webhook pipeline with snapshot context.
         self._active_state = {
             "weapon": False,
             "plate": False,
@@ -69,10 +48,6 @@ class LiveMonitor:
         self._last_plate_key: Optional[str] = None
         self._last_face_key: Optional[str] = None
         self._loop_started_monotonic = 0.0
-
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
 
     def connect(self, source: VideoSource, user_id: Optional[int] = None) -> Dict[str, Any]:
         with self._lock:
@@ -105,7 +80,6 @@ class LiveMonitor:
             self._source_label = source.label
             self._resolution = self._read_resolution(source)
 
-            # Fresh AI pipeline state for this new session -- see __init__.
             self._processor = frame_processor.FrameProcessor(label=source.label)
 
             analysis = analysis_pipeline.queue_for_analysis(
@@ -121,7 +95,6 @@ class LiveMonitor:
                 message=f"Live source connected: {source.label}. Preview streaming.",
             )
 
-            # Continuous capture starts immediately — live video, not one still.
             self._stop_event.clear()
             self._thread = threading.Thread(
                 target=self._capture_loop,
@@ -187,10 +160,7 @@ class LiveMonitor:
                 self._processing_status = "idle"
             return self.status()
 
-    # ------------------------------------------------------------------
     # Status / frames
-    # ------------------------------------------------------------------
-
     def status(self) -> Dict[str, Any]:
         with self._lock:
             fp_stats = self._processor.get_stats()
@@ -224,17 +194,13 @@ class LiveMonitor:
         self._frame_event.clear()
         return self.get_jpeg()
 
-    # ------------------------------------------------------------------
     # Internals
-    # ------------------------------------------------------------------
-
     def _stop_loop_unlocked(self, join: bool = False) -> None:
         self._stop_event.set()
         self._monitoring = False
         thread = self._thread
         self._thread = None
         if join and thread is not None and thread.is_alive():
-            # Release lock while joining so the capture loop can finish.
             self._lock.release()
             try:
                 thread.join(timeout=3.0)
@@ -456,7 +422,6 @@ class LiveMonitor:
 
             ok, frame = source.read()
             if not ok or frame is None:
-                # Brief retry — webcams can drop a frame without dying.
                 time.sleep(0.02)
                 ok, frame = source.read()
                 if not ok or frame is None:
@@ -485,7 +450,6 @@ class LiveMonitor:
                     except Exception:
                         logger.exception("Live alert emit failed")
                 else:
-                    # Light HUD so preview is clearly live (no AI yet).
                     annotated = frame.copy()
                     cv2.putText(
                         annotated,
@@ -505,7 +469,6 @@ class LiveMonitor:
                     self._error_code = "processing_failed"
                     self._processing_status = "error"
                     self._monitoring = False
-                # Keep preview alive even if one AI call fails
                 annotated = frame
                 meta = {}
 
@@ -519,8 +482,6 @@ class LiveMonitor:
                     self._fps = window_frames / elapsed
                     window_frames = 0
                     window_t0 = time.perf_counter()
-
-            # Cap preview roughly ~20–25 FPS when AI is off; AI path is self-limiting.
             time.sleep(0.001 if ai_on else 0.04)
 
         with self._lock:
@@ -529,6 +490,4 @@ class LiveMonitor:
             self._monitoring = False
         logger.info("Live capture loop stopped")
 
-
-# Process-wide singleton used by the live API routes.
 monitor = LiveMonitor()

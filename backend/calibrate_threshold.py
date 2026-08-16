@@ -1,30 +1,8 @@
-"""
-calibrate_threshold.py
------------------------
-The shipped ANOMALY_THRESHOLD (0.01) in frame_processor.py was a hardcoded
-guess in the original training script -- it was never checked against the
-actual reconstruction-error distribution of normal footage, which is why
-it fires on frames that look completely normal.
-
-This script fixes that: point it at a video clip of NORMAL footage from
-your actual camera/site (no weapons, no incidents, just everyday activity
--- the more representative of your real deployment, the better), and it
-reports the mean/std/max reconstruction error plus a suggested threshold.
-
-Usage:
-    python calibrate_threshold.py path/to/normal_footage.mp4
-
-Then set (env var, or edit ANOMALY_THRESHOLD default in frame_processor.py):
-    ANOMALY_THRESHOLD=<suggested_threshold>
-"""
-
 import sys
-
 import cv2
 import numpy as np
 import torch
 import torch.nn as nn
-
 
 class ConvolutionalAutoencoder(nn.Module):
 

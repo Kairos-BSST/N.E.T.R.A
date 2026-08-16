@@ -1,4 +1,3 @@
-/* history.js — Operator scan history + Administrator activity/report history/operators */
 window.NetraHistory = {
   user: null,
   historyPage: 1,

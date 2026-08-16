@@ -1,10 +1,7 @@
-"""Google Drive OAuth + video fetch for authenticated NETRA operators."""
 from __future__ import annotations
-
 import logging
 import os
 from typing import Optional
-
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel

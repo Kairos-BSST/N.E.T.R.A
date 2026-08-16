@@ -1,5 +1,3 @@
-/* live.js — Live CCTV / RTSP / webcam input */
-
 window.NetraLive = {
   init() {
     const methodsEl = document.getElementById('liveMethods');

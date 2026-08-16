@@ -1,9 +1,4 @@
-"""
-RTSP URL builders for common CCTV brands + RTSPSource.
-"""
-
 from __future__ import annotations
-
 import logging
 import re
 from typing import Optional
@@ -42,12 +37,6 @@ def build_rtsp_url(
     channel: int = 1,
     subtype: int = 0,
 ) -> str:
-    """
-    Build a brand-specific RTSP URL.
-
-    Hikvision:  rtsp://user:pass@ip:port/Streaming/Channels/101
-    Dahua / CP Plus: rtsp://user:pass@ip:port/cam/realmonitor?channel=1&subtype=0
-    """
     brand_key = (brand or "").strip().lower().replace("-", "_").replace(" ", "_")
     if brand_key in ("cpplus", "cp-plus"):
         brand_key = BRAND_CP_PLUS
@@ -112,8 +101,6 @@ def _classify_open_failure(url: str, detail: str = "") -> VideoSourceError:
 
 
 class RTSPSource(VideoSource):
-    """Continuous frame source backed by an RTSP URL."""
-
     source_kind = "rtsp"
 
     def __init__(
@@ -144,7 +131,6 @@ class RTSPSource(VideoSource):
 
     def connect(self) -> None:
         self.release()
-        # Prefer FFmpeg backend for RTSP when available.
         cap = cv2.VideoCapture(self._url, cv2.CAP_FFMPEG)
         try:
             cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, float(self._open_timeout_ms))

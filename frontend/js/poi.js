@@ -1,4 +1,3 @@
-/* poi.js — Person-of-interest enrollment (max 2 face images) + gallery */
 window.NetraPoi = {
   _pois: [],
 

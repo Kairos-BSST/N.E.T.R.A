@@ -1,31 +1,8 @@
-"""
-state_tracker.py
------------------
-Keeps track of which videos have already been fetched from the cloud so
-that the fetcher never downloads the same file twice, even across restarts.
-
-State is persisted as a simple JSON file:
-    {
-        "camera1/2026-08-01_1200.mp4": {
-            "downloaded_at": "2026-08-02T10:15:00",
-            "local_path": "./downloaded_videos/camera1/2026-08-01_1200.mp4",
-            "size_bytes": 10485760
-        },
-        ...
-    }
-
-For a small-to-medium deployment a JSON file is plenty. If your video
-volume grows very large (tens of thousands of files), swap this out for
-a SQLite table with the same three methods (has_been_fetched, mark_fetched,
-all_fetched) and nothing else in the codebase needs to change.
-"""
-
 import json
 import os
 import threading
 from datetime import datetime, timezone
 from typing import Dict
-
 
 class StateTracker:
     def __init__(self, state_file_path: str):
@@ -47,7 +24,7 @@ class StateTracker:
         tmp_path = f"{self.state_file_path}.tmp"
         with open(tmp_path, "w") as f:
             json.dump(self._state, f, indent=2)
-        os.replace(tmp_path, self.state_file_path)  # atomic on POSIX
+        os.replace(tmp_path, self.state_file_path)  
 
     def has_been_fetched(self, blob_name: str) -> bool:
         with self._lock:

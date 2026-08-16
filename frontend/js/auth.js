@@ -1,4 +1,3 @@
-/* auth.js — login/session gate. Role is read from the server, never chosen by the user. */
 (function () {
   const screen = document.getElementById('loginScreen');
   const shell = document.getElementById('appShell');

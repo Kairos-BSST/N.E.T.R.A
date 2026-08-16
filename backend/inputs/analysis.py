@@ -1,13 +1,9 @@
-"""Analysis, history, reports and authenticated evidence access."""
 from __future__ import annotations
-
 import os
 from typing import Optional
-
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-
 import analysis_pipeline
 import database
 import report_pdf
@@ -17,11 +13,9 @@ from deps import state
 
 router = APIRouter(tags=["analysis"])
 
-
 class OperatorCreate(BaseModel):
     username: str = Field(..., min_length=3, max_length=64)
     password: str = Field(..., min_length=8, max_length=256)
-
 
 def _authorized_job(job_id: str, user: dict) -> dict:
     job = analysis_pipeline.get_job(job_id)
@@ -31,7 +25,6 @@ def _authorized_job(job_id: str, user: dict) -> dict:
         raise HTTPException(status_code=403, detail="You do not have access to this analysis.")
     return job
 
-
 def _secure_event(event: dict, job_id: str) -> dict:
     ev = dict(event)
     url = ev.get("snapshot_url")
@@ -39,18 +32,15 @@ def _secure_event(event: dict, job_id: str) -> dict:
         ev["snapshot_url"] = url.replace(f"/snapshots/{job_id}/", f"/evidence/snapshots/{job_id}/", 1)
     return ev
 
-
 @router.get("/analysis/jobs")
 def list_analysis_jobs(user=Depends(current_user)):
     if user.get("role") == "administrator":
         return {"jobs": database.list_jobs(limit=100)}
     return database.history_jobs(user_id=user["id"], is_admin=False, page=1, page_size=100)
 
-
 @router.get("/analysis/jobs/{job_id}")
 def get_analysis_job(job_id: str, user=Depends(current_user)):
     return _authorized_job(job_id, user)
-
 
 @router.get("/analysis/jobs/{job_id}/report")
 def get_analysis_report(job_id: str, user=Depends(current_user)):
@@ -75,7 +65,6 @@ def get_analysis_report(job_id: str, user=Depends(current_user)):
         "evidence": database.evidence_for_job(job_id),
     }
 
-
 @router.get("/analysis/jobs/{job_id}/report/download")
 def download_analysis_report(job_id: str, user=Depends(current_user)):
     job = _authorized_job(job_id, user)
@@ -83,7 +72,6 @@ def download_analysis_report(job_id: str, user=Depends(current_user)):
     database.record_audit(user["id"], "REPORT_DOWNLOADED", job_id=job_id, resource_type="report", resource_id=job_id, details={"sha256": database.hash_file(pdf_path)})
     safe_name = (job.get("original_name") or job_id).rsplit(".", 1)[0]
     return FileResponse(pdf_path, media_type="application/pdf", filename=f"NETRA_report_{safe_name}.pdf")
-
 
 @router.get("/evidence/snapshots/{job_id}/{filename}")
 def get_snapshot(job_id: str, filename: str, user=Depends(current_user)):
@@ -94,7 +82,6 @@ def get_snapshot(job_id: str, filename: str, user=Depends(current_user)):
     database.record_audit(user["id"], "EVIDENCE_VIEWED", job_id=job_id, resource_type="snapshot", resource_id=filename)
     return FileResponse(path, media_type="image/jpeg")
 
-
 @router.get("/evidence/annotated/{job_id}")
 def get_annotated_video(job_id: str, user=Depends(current_user)):
     _authorized_job(job_id, user)
@@ -103,7 +90,6 @@ def get_annotated_video(job_id: str, user=Depends(current_user)):
         raise HTTPException(status_code=404, detail="Annotated video not found.")
     database.record_audit(user["id"], "EVIDENCE_VIEWED", job_id=job_id, resource_type="annotated_video", resource_id=os.path.basename(path))
     return FileResponse(path, media_type="video/mp4", filename=os.path.basename(path))
-
 
 @router.get("/evidence/clips/{job_id}/{filename}")
 def get_clip(job_id: str, filename: str, user=Depends(current_user)):
@@ -114,7 +100,6 @@ def get_clip(job_id: str, filename: str, user=Depends(current_user)):
         raise HTTPException(status_code=404, detail="Evidence clip not found.")
     database.record_audit(user["id"], "EVIDENCE_DOWNLOADED", job_id=job_id, resource_type="clip", resource_id=filename)
     return FileResponse(path, media_type="video/mp4", filename=filename)
-
 
 @router.get("/history")
 def history(
@@ -127,7 +112,6 @@ def history(
         search=search.strip(), source=source, status=status, event_type=event_type,
         date_from=date_from, date_to=date_to, page=max(1, page), page_size=max(1, min(page_size, 100)),
     )
-
 
 @router.get("/admin/audit")
 def admin_audit(
@@ -143,7 +127,6 @@ def admin_audit(
         ),
     )
 
-
 @router.get("/admin/scans")
 def admin_scans(
     search: str = "", source: str = "", status: str = "",
@@ -155,11 +138,9 @@ def admin_scans(
         date_from=date_from, date_to=date_to, page=max(1, page), page_size=max(1, min(page_size, 100)),
     )
 
-
 @router.get("/admin/users")
 def admin_users(user=Depends(administrator)):
     return {"users": database.users_for_filter()}
-
 
 @router.post("/admin/operators")
 def add_operator(body: OperatorCreate, user=Depends(administrator)):
@@ -175,7 +156,6 @@ def add_operator(body: OperatorCreate, user=Depends(administrator)):
         details={"username": operator["username"], "role": "operator"},
     )
     return {"operator": operator}
-
 
 @router.get("/videos")
 def list_fetched_videos(user=Depends(current_user)):

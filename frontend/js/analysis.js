@@ -1,4 +1,3 @@
-/* analysis.js — shared model-analysis UI + report/timeline polling */
 
 window.NetraAnalysis = {
   _pollTimer: null,
@@ -7,8 +6,6 @@ window.NetraAnalysis = {
   _events: [],
   _videoInfo: null,
   _activeOverlayEvent: null,
-
-  /* ---- video preview ---- */
 
   showVideoPreview(file) {
     const block = document.getElementById('videoPreviewBlock');

@@ -1,22 +1,9 @@
-"""
-VideoSource — common interface for every intake path.
-
-File upload, cloud fetch, RTSP CCTV, and webcam all expose the same
-connect / read / release / isOpened contract so the AI pipeline never
-cares where frames come from.
-"""
-
 from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from typing import Any, Optional, Tuple
-
 import numpy as np
 
-
 class VideoSourceError(Exception):
-    """Base error for video source failures."""
-
     code: str = "source_error"
 
     def __init__(self, message: str, *, code: Optional[str] = None):
@@ -47,8 +34,6 @@ class WebcamUnavailableError(VideoSourceError):
 
 
 class VideoSource(ABC):
-    """Abstract continuous frame provider."""
-
     source_kind: str = "unknown"
 
     @abstractmethod

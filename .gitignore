@@ -85,3 +85,13 @@ backend/poi_gallery/
 backend/tests/
 
 # Training Data
+training/**/__pycache__/
+training/Anomaly_detection/outputs/
+training/OCR/dataset/
+training/OCR/outputs/
+training/OCR/runs/license_plate_detector/args.yaml
+training/OCR/runs/license_plate_detector/weights/
+training/OCR/runs/license_plate_detector/train_batch*.jpg
+training/OCR/runs/license_plate_detector/val_batch*.jpg
+training/Violence_Detection/outputs/
+training/weapon_detection/outputs/

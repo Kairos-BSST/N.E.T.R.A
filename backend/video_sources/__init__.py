@@ -1,7 +1,3 @@
-"""
-video_sources package — unified frame providers for Signal Intake.
-"""
-
 from video_sources.base import (
     AuthenticationFailedError,
     CameraUnreachableError,

@@ -1,16 +1,5 @@
-"""
-inputs/alerts.py
-----------------
-REST API for the Sub-5s alerting pipeline:
-  - rules / watchlists / webhook routes
-  - recent alerts
-  - webhook connectivity test
-"""
-
 from __future__ import annotations
-
 from typing import Any, Dict, List, Optional
-
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
@@ -20,8 +9,6 @@ import database
 from auth import administrator, current_user
 
 router = APIRouter(tags=["alerts"])
-
-
 class WebhookIn(BaseModel):
     id: Optional[str] = None
     name: str = "Operator webhook"

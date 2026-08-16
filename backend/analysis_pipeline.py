@@ -1,17 +1,3 @@
-"""
-analysis_pipeline.py
---------------------
-Shared analysis job registry and background processing pipeline.
-
-File-based sources such as local uploads and Google Drive downloads are
-processed in background threads.
-
-Live CCTV / RTSP / webcam sources are handled continuously by
-live_monitor.py but use the same frame_processor.process_frame()
-inference entry point.
-
-This keeps all AI inference paths centralized.
-"""
 from __future__ import annotations
 
 import logging
@@ -29,30 +15,16 @@ from config import Config
 import database
 from webhook_client import send_event_webhook
 
-# alerting is imported lazily inside add_event to avoid circular imports
-# during module load; see emit path below.
-
 logger = logging.getLogger("netra.analysis")
 
 
-# ============================================================
 # Source kinds
-# ============================================================
-
 SOURCE_UPLOAD = "upload"
 SOURCE_DRIVE = "drive"
 SOURCE_LIVE = "live"
 SOURCE_WEBCAM = "webcam"
 
-
 def _get_analysis_fps(source_fps: float) -> float:
-    """Return the effective AI analysis FPS for a video.
-
-    Videos are still read frame-by-frame so seeking does not introduce
-    codec/keyframe issues, but only selected frames are sent to the
-    expensive AI models. If the source is already slower than the target,
-    every frame is analyzed.
-    """
     configured = float(getattr(Config, "VIDEO_ANALYSIS_FPS", 8.0) or 8.0)
     if configured <= 0:
         configured = 8.0
@@ -60,38 +32,19 @@ def _get_analysis_fps(source_fps: float) -> float:
         return configured
     return min(source_fps, configured)
 
-
-# ============================================================
 # Job registry
-# ============================================================
-
 _lock = threading.RLock()
-
 _jobs: Dict[str, dict] = {}
-
 _workers: Dict[str, threading.Thread] = {}
 
-
-# ============================================================
 # Helpers
-# ============================================================
-
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
-
 def _safe_job_copy(job: dict) -> dict:
-    """
-    Return a copy of a job so callers cannot accidentally mutate the
-    internal registry.
-    """
     return dict(job)
 
 def format_video_timestamp(seconds: float) -> str:
-    """
-    Convert a video-relative offset (seconds) into HH:MM:SS.mmm for
-    display in the report / timeline.
-    """
     if seconds is None or seconds < 0:
         seconds = 0.0
     total_ms = int(round(seconds * 1000))
@@ -100,41 +53,26 @@ def format_video_timestamp(seconds: float) -> str:
     secs, ms = divmod(rem_ms, 1000)
     return f"{hours:02d}:{minutes:02d}:{secs:02d}.{ms:03d}"
 
-
 def _describe_location(
     bbox: Optional[List[int]],
     frame_w: int,
     frame_h: int,
     source_label: str,
 ) -> str:
-    """
-    Human-readable location for a report row.
-
-    For detections with a bounding box (weapon / plate), this describes
-    WHERE in the frame it was seen (a 3x3 grid: top/middle/bottom x
-    left/center/right). For frame-level events (anomaly / violence, which
-    have no bounding box) it falls back to just the camera / source name,
-    since there is no specific region to point to.
-    """
 
     if not bbox or frame_w <= 0 or frame_h <= 0:
         return f"Camera: {source_label}"
-
     x1, y1, x2, y2 = bbox
     cx = (x1 + x2) / 2.0
     cy = (y1 + y2) / 2.0
-
     col = "left" if cx < frame_w / 3 else ("center" if cx < 2 * frame_w / 3 else "right")
     row = "top" if cy < frame_h / 3 else ("middle" if cy < 2 * frame_h / 3 else "bottom")
-
     return f"Camera: {source_label} — {row}-{col} of frame"
-
 
 def _snapshot_dir_for_job(job_id: str) -> str:
     path = os.path.join(Config.SNAPSHOT_DIR, job_id)
     os.makedirs(path, exist_ok=True)
     return path
-
 
 def _save_snapshot(
     job_id: str,
@@ -142,22 +80,13 @@ def _save_snapshot(
     frame: np.ndarray,
     detections: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[str]:
-    """
-    Persist a JPEG evidence thumbnail for one detected event.
-    Draws bounding boxes when detections are provided so the report
-    shows WHERE the plate/weapon was, not just a bare frame.
-    Returns a web-servable relative URL (mounted at /snapshots by api.py),
-    or None if the snapshot could not be written.
-    """
     try:
         import frame_processor
-
         out_frame = frame
         if detections:
             out_frame = frame_processor.draw_detections_on_frame(
                 frame, detections
             )
-
         out_dir = _snapshot_dir_for_job(job_id)
         filename = f"{event_id}.jpg"
         full_path = os.path.join(out_dir, filename)
@@ -176,20 +105,10 @@ def _save_snapshot(
         logger.exception("Failed to save snapshot for job_id=%s event_id=%s", job_id, event_id)
         return None
 
-
 def _annotated_video_path(job_id: str) -> str:
     return os.path.join(_snapshot_dir_for_job(job_id), "annotated.mp4")
 
-
 def add_event(job_id: str, event: Dict[str, Any]) -> None:
-    """
-    Append one detection event to a job's live event log (used to build
-    the searchable report / timeline). Kept separate from `result` so the
-    frontend can poll and render events while analysis is still running.
-
-    Immediately hands the event to the Sub-5s alerting pipeline
-    (rules / watchlists / webhook routing with snapshot+clip context).
-    """
     job_copy = None
     with _lock:
         job = _jobs.get(job_id)
@@ -210,9 +129,8 @@ def add_event(job_id: str, event: Dict[str, Any]) -> None:
     except Exception:
         logger.exception("Alert pipeline failed for job_id=%s — falling back to legacy webhook", job_id)
         send_event_webhook(job_id, event)
-# ============================================================
+
 # Job creation
-# ============================================================
 
 def queue_for_analysis(
     *,
@@ -222,19 +140,7 @@ def queue_for_analysis(
     original_name: Optional[str] = None,
     extra: Optional[Dict[str, Any]] = None,
 ) -> dict:
-    """
-    Register a source for analysis.
-
-    This function only creates the job.
-
-    For file-based sources, call start_file_analysis(job_id) after the
-    file has been successfully saved/downloaded.
-
-    Live sources are processed by live_monitor.py.
-    """
-
     job_id = str(uuid.uuid4())
-
     job = {
         "job_id": job_id,
         "user_id": (extra or {}).get("user_id"),
@@ -254,8 +160,6 @@ def queue_for_analysis(
         "result": None,
         "error": None,
         "extra": extra or {},
-        # Chronological, timestamped detection log — the raw material for
-        # the searchable report / evidence review screen.
         "events": [],
     }
 
@@ -282,10 +186,7 @@ def queue_for_analysis(
 
     return _safe_job_copy(job)
 
-# ============================================================
 # Job registry operations
-# ============================================================
-
 def update_job(
     job_id: Optional[str],
     **fields: Any,
@@ -350,16 +251,7 @@ def list_jobs(limit: int = 50) -> List[dict]:
     return [_safe_job_copy(job) for job in jobs[:limit]]
 
 
-# ============================================================
 # Shared AI entry point
-# ============================================================
-#
-# NOTE: this module-level process_frame() (backed by frame_processor's
-# single shared default instance) is kept only for any external/legacy
-# caller. _file_analysis_worker below does NOT use it -- each job creates
-# its own frame_processor.FrameProcessor() instance so concurrent uploads
-# don't corrupt each other's frame counters/detections/violence buffers.
-# See frame_processor.py's FrameProcessor docstring for why that mattered.
 
 def process_frame(
     frame: np.ndarray,
@@ -367,35 +259,16 @@ def process_frame(
     source_label: str = "",
     draw: bool = True,
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
-    """
-    Shared AI entry point (single default stream). Prefer creating your
-    own frame_processor.FrameProcessor() instance for anything that may
-    run concurrently with other streams.
-    """
-
     import frame_processor
-
     return frame_processor.process_frame(
         frame,
         source_label=source_label,
         draw=draw,
     )
 
-
-# ============================================================
 # Background file analysis
-# ============================================================
-
 def start_file_analysis(job_id: str) -> dict:
-    """
-    Start processing a queued local video in a background thread.
-
-    Returns immediately so FastAPI does not block while the entire
-    video is analysed.
-    """
-
     with _lock:
-
         job = _jobs.get(job_id)
 
         if job is None:
@@ -445,18 +318,6 @@ def start_file_analysis(job_id: str) -> dict:
 
 
 def _file_analysis_worker(job_id: str) -> None:
-    """
-    Worker executed in a daemon thread.
-
-    Opens the video, feeds frames through a PER-JOB AI pipeline instance
-    and stores a compact summary in the analysis job.
-
-    Each job gets its own frame_processor.FrameProcessor() so that
-    multiple uploads analyzed at the same time (each already runs in its
-    own thread -- see start_file_analysis) don't share frame counters,
-    detection state, or the violence frame buffer with each other.
-    """
-
     import frame_processor
 
     print(f"[ANALYSIS] Worker started: {job_id}", flush=True)
@@ -503,12 +364,6 @@ def _file_analysis_worker(job_id: str) -> None:
     plates_seen: Dict[str, Dict[str, Any]] = {}
     last_plate_key: Optional[str] = None
     last_face_key: Optional[str] = None
-
-    # Whether each event type is CURRENTLY being detected. An event is
-    # only logged on the False -> True transition (i.e. when something
-    # NEW starts happening), not on every frame it continues to be true.
-    # This keeps the report to one row per real occurrence instead of
-    # one row every couple of seconds.
     active_state: Dict[str, bool] = {
         "weapon": False,
         "plate": False,
@@ -517,10 +372,6 @@ def _file_analysis_worker(job_id: str) -> None:
         "face": False,
     }
 
-    # Models are preloaded once by the API startup thread. A video can be
-    # uploaded immediately, but its worker waits here if model initialization
-    # is still running. This keeps uploads responsive without loading a
-    # second copy of every model for the job.
     if not frame_processor.models_ready():
         update_job(
             job_id,
@@ -538,8 +389,6 @@ def _file_analysis_worker(job_id: str) -> None:
         frame_processor.wait_for_models()
         print("[ANALYSIS] Background AI models are ready.", flush=True)
 
-    # Per-job AI pipeline instance -- state is isolated per video, while the
-    # underlying models are shared singletons loaded once at startup.
     processor = frame_processor.FrameProcessor(label=source_label)
 
     writer: Optional[cv2.VideoWriter] = None
@@ -639,14 +488,6 @@ def _file_analysis_worker(job_id: str) -> None:
                 if fps > 0
                 else 0.0
             )
-
-            # Feed every source frame to FrameProcessor. The processor itself
-            # throttles weapon/OCR/anomaly/crowd inference, while violence
-            # deliberately samples every 2nd source frame just like the
-            # standalone training/validation script. Previously the outer
-            # analysis_fps sampler discarded frames before the violence model
-            # could ever see them, changing its temporal input from ~16 frames
-            # to a much longer, sparse clip.
             frames_processed += 1
 
             if frames_processed == 1 or frames_processed % 15 == 0:
@@ -666,11 +507,7 @@ def _file_analysis_worker(job_id: str) -> None:
                 writer.write(annotated)
 
             last_meta = meta
-
-            # ------------------------------------------------
             # Detection summary
-            # ------------------------------------------------
-
             detections = meta.get(
                 "detections",
                 [],
@@ -691,11 +528,7 @@ def _file_analysis_worker(job_id: str) -> None:
                     [],
                 )
             )
-
-            # ------------------------------------------------
             # Anomaly summary
-            # ------------------------------------------------
-
             anomaly = meta.get(
                 "anomaly",
                 {},
@@ -717,10 +550,7 @@ def _file_analysis_worker(job_id: str) -> None:
                 anomaly_error,
             )
 
-            # ------------------------------------------------
             # Violence summary
-            # ------------------------------------------------
-
             violence = meta.get(
                 "violence",
                 {},
@@ -748,10 +578,7 @@ def _file_analysis_worker(job_id: str) -> None:
                 max_violence_confidence,
                 confidence,
             )
-# ------------------------------------------------
             # Timestamped event log (report / timeline / evidence)
-            # ------------------------------------------------
-
             video_time = source_video_time
 
             def _log_event(event_type, label, confidence_val, extra_fields=None, snap_dets=None):
@@ -911,10 +738,7 @@ def _file_analysis_worker(job_id: str) -> None:
                 last_face_key = None
             active_state["face"] = face_now
 
-            # ------------------------------------------------
             # Progress update
-            # ------------------------------------------------
-
             if total_frames:
                 progress = min(
                     100.0,
@@ -927,8 +751,6 @@ def _file_analysis_worker(job_id: str) -> None:
             else:
                 progress = 0.0
 
-            # Updating the registry every single frame creates
-            # unnecessary lock traffic, so update periodically.
             if (
                 frames_processed == 1
                 or frames_processed % 5 == 0
@@ -1070,15 +892,7 @@ def _file_analysis_worker(job_id: str) -> None:
                 None,
             )
 
-# ============================================================
-# Worker information
-# ============================================================
-
 def is_processing(job_id: str) -> bool:
-    """
-    Return True if the job currently has an active file-analysis worker.
-    """
-
     with _lock:
 
         worker = _workers.get(job_id)
