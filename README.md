@@ -96,7 +96,7 @@ For installation, environment configuration, and setup instructions, refer to:
 
 ## Workflow
 
-![Workflow](images/workflow.png)
+![Workflow](images/Workflow.png)
 
 ## Tech Stack
 
