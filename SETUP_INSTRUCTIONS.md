@@ -26,22 +26,85 @@ copy .env.example .env
 
 Fill in login + OAuth + webhook values in `.env`.
 
-## 3. Google Drive (optional but needed for Drive)
+## 3. Google Drive OAuth Setup
 
-- Place OAuth client JSON at: `cloud_integration/google_oauth_client_secret.json`
-- Keep this path in `.env`:
+Google Drive integration is **optional** and is only required if you want to fetch videos from Google Drive.
 
-```text
-GOOGLE_OAUTH_CLIENT_SECRETS_FILE=../cloud_integration/google_oauth_client_secret.json
-```
+The application uses **Google OAuth 2.0** to authenticate users and access their Google Drive files.
 
-- Redirect URI must match Google Cloud exactly:
+### Step 1: Create a Google Cloud Project
+
+1. Open the **Google Cloud Console**.
+2. Create a new project or select an existing project.
+3. Enable the **Google Drive API** for the project.
+
+### Step 2: Configure Google OAuth
+
+1. Open **Google Auth Platform** in Google Cloud Console.
+2. Configure the OAuth consent screen.
+3. Configure the required application details.
+4. Add the Google Drive scopes required by the application.
+5. Create an **OAuth 2.0 Client ID**.
+6. Select **Web Application** as the application type.
+
+Add the following redirect URI:
 
 ```text
 http://127.0.0.1:8000/auth/google/callback
+### Step 3: Configure Test User
+
+If the OAuth application is in **Testing** mode, the Google account used to test the application must be added as a **Test User**.
+
+1. Go to **Google Auth Platform → Audience**.
+2. Locate the **Test users** section.
+3. Click **Add users**.
+4. Enter the Google/Gmail account that will be used to test the application.
+5. Save the changes.
+
+The user must sign in using the same Google account that has been added as a Test User.
+
+> **For project evaluation:** Evaluators should add **their own Google account** as a Test User. The project's personal Google account or credentials do not need to be provided.
+
+### Step 4: Download OAuth Client JSON
+
+After creating the OAuth Client ID:
+
+1. Download the OAuth client JSON file from Google Cloud.
+2. Rename it to:
+
+```text
+google_oauth_client_secret.json
+3. Place it at:
+
+```text
+cloud_integration/google_oauth_client_secret.json
 ```
 
-- If the OAuth app is in **Testing**, add each teammate’s Google email as a **Test user**
+Expected project structure:
+
+```text
+N.E.T.R.A/
+├── backend/
+│   ├── .env
+│   └── ...
+├── cloud_integration/
+│   └── google_oauth_client_secret.json
+├── models/
+└── ...
+```
+
+### Step 5: Configure `.env`
+
+In `backend/.env`, add the following:
+
+```env
+GOOGLE_OAUTH_CLIENT_SECRETS_FILE=../cloud_integration/google_oauth_client_secret.json
+GOOGLE_OAUTH_REDIRECT_URI=http://127.0.0.1:8000/auth/google/callback
+```
+
+> **Important:** The `GOOGLE_OAUTH_REDIRECT_URI` must exactly match the redirect URI configured in Google Cloud.
+
+> **Security:** Do not commit or publicly share the actual OAuth client JSON file or `.env` file. Evaluators should create their own OAuth credentials and use their own Google account as a Test User.
 
 ## 4. Install + run
 
