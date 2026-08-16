@@ -1,27 +1,3 @@
-"""
-frame_processor.py
-------------------
-Shared AI inference pipeline for N.E.T.R.A.
-
-Models:
-1. Weapon detection       - YOLO (weapon.pt)
-2. Number plate detection - YOLO (OCR.pt)
-3. Anomaly detection      - Convolutional Autoencoder (anomaly.pth)
-4. Violence detection     - MC3-18 (violence.pth)
-5. Crowd density/counting  - LWCC DM-Count (pretrained)
-6. Person-of-interest face  - OpenCV YuNet + SFace re-id
-
-Designed for CPU-only / low-memory systems.
-
-NOTE:
-Number-plate handling is a two-stage pipeline:
-  1. OCR.pt (YOLO)               -> detects the plate bounding box.
-  2. PaddleOCR recognition model -> reads the text out of the crop
-                                     produced by stage 1.
-PaddleOCR is initialized once (singleton) and only ever runs on the
-small cropped plate region, never on the full frame.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -33,30 +9,20 @@ import tempfile
 from collections import deque
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple
-
 import cv2
 import numpy as np
-
 
 logger = logging.getLogger("netra.frame_processor")
 
 
-# ============================================================
 # Configuration
-# ============================================================
-
 DEVICE = "cpu"
-
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
-
-# All detectors stay ON for every video. False positives are killed by
-# confidence + geometry + multi-frame confirmation (below), not by
-# disabling models.
 ENABLE_WEAPON = _env_bool("ENABLE_WEAPON", True)
 ENABLE_OCR = _env_bool("ENABLE_OCR", True)
 ENABLE_ANOMALY = _env_bool("ENABLE_ANOMALY", True)
@@ -64,35 +30,25 @@ ENABLE_VIOLENCE = _env_bool("ENABLE_VIOLENCE", True)
 ENABLE_CROWD = _env_bool("ENABLE_CROWD", True)
 ENABLE_FACE = _env_bool("ENABLE_FACE", True)
 
-# Crowd-density alert: raise an alert when the estimated number of people
-# in a frame reaches this threshold. LWCC/DM-Count is CPU-based.
 CROWD_THRESHOLD = int(os.getenv("CROWD_THRESHOLD", "40"))
 CROWD_INTERVAL = int(os.getenv("CROWD_INTERVAL", "60"))
 FACE_INTERVAL = int(os.getenv("FACE_INTERVAL", "8"))
 
-# A raw hit must survive this many consecutive inference checks before it
-# is treated as a real detection. One-frame YOLO flukes (car panel =
-# pistol) die here.
 DETECT_CONFIRM_HITS = int(os.getenv("DETECT_CONFIRM_HITS", "1"))
 DETECT_CLEAR_MISSES = int(os.getenv("DETECT_CLEAR_MISSES", "2"))
 BOX_MATCH_IOU = float(os.getenv("BOX_MATCH_IOU", "0.30"))
 
-# Weapon geometry: real weapons are small-to-medium, not half the frame.
 WEAPON_CONFIDENCE = float(os.getenv("WEAPON_CONFIDENCE", "0.50"))
 WEAPON_MIN_AREA_FRAC = float(os.getenv("WEAPON_MIN_AREA_FRAC", "0.0008"))
 WEAPON_MAX_AREA_FRAC = float(os.getenv("WEAPON_MAX_AREA_FRAC", "0.12"))
 WEAPON_MIN_ASPECT = float(os.getenv("WEAPON_MIN_ASPECT", "0.20"))
 WEAPON_MAX_ASPECT = float(os.getenv("WEAPON_MAX_ASPECT", "5.0"))
 
-# Plates: require a readable OCR string OR a very strong detector score.
 OCR_CONFIDENCE = float(os.getenv("OCR_CONFIDENCE", "0.35"))
 OCR_STRONG_DET_CONF = float(os.getenv("OCR_STRONG_DET_CONF", "0.60"))
 OCR_MIN_TEXT_LEN = int(os.getenv("OCR_MIN_TEXT_LEN", "4"))
 OCR_MIN_REC_SCORE = float(os.getenv("OCR_MIN_REC_SCORE", "0.55"))
 
-# Floor matches training script (THRESHOLD=0.01). Adaptive warm-up may
-# raise it a little for noisy cameras, but is CAPPED so a fight/anomaly
-# clip that is "weird" from frame 1 cannot calibrate the bar above itself.
 ANOMALY_THRESHOLD = float(os.getenv("ANOMALY_THRESHOLD", "0.01"))
 ANOMALY_WARMUP_FRAMES = int(os.getenv("ANOMALY_WARMUP_FRAMES", "0"))
 ANOMALY_STD_MULT = float(os.getenv("ANOMALY_STD_MULT", "2.5"))
@@ -109,37 +65,9 @@ VIOLENCE_SEQUENCE_LENGTH = 16
 VIOLENCE_SAMPLE_INTERVAL = 2
 VIOLENCE_RETAIN_FRAMES = int(os.getenv("VIOLENCE_RETAIN_FRAMES", "8"))
 VIOLENCE_INFERENCE_INTERVAL = int(os.getenv("VIOLENCE_INFERENCE_INTERVAL", "16"))
-# Real fight clips score ~0.97+; car false-fights cluster ~0.85. 0.90
-# keeps true fights while cutting most road-scene false positives.
-# Confirm=2 requires two consecutive FIGHT decisions (matches training
-# clip cadence better than a single noisy hit).
+
 VIOLENCE_MIN_CONFIDENCE = float(os.getenv("VIOLENCE_MIN_CONFIDENCE", "0.00"))
 VIOLENCE_CONFIRM_HITS = int(os.getenv("VIOLENCE_CONFIRM_HITS", "1"))
-
-
-# ============================================================
-# Global state
-#
-# IMPORTANT: only the MODELS (weapon/ocr/anomaly/violence + their load
-# status) live here as shared singletons -- that's correct, since loading
-# a multi-hundred-MB model per camera/job would be wasteful, and a loaded
-# model in eval() mode is safe to run concurrent inference against.
-#
-# Everything that represents ONE STREAM'S RUNNING STATE (frame counter,
-# last detections, violence frame buffer, scene-change baseline, stats)
-# used to live here too, as module-level globals. That was a real bug:
-# analysis_pipeline.py already runs one background thread PER uploaded
-# file, and every one of those threads called the same module-level
-# process_frame(), so two uploads analyzed at the same time would
-# silently corrupt each other's detections (job A's frame counter,
-# last-seen weapon boxes, violence buffer, etc. would bleed into job B's
-# results, and vice versa) with no error raised anywhere.
-#
-# Fixed by moving all per-stream state into the FrameProcessor class
-# below. Every analysis job / live camera session now creates its own
-# FrameProcessor() instance and calls instance.process_frame(...); the
-# models themselves stay shared module-level singletons.
-# ============================================================
 
 _lock = threading.RLock()
 
@@ -165,22 +93,10 @@ _model_status: Dict[str, str] = {
 
 _model_errors: Dict[str, str] = {}
 
-# Set once the background startup preload has attempted every enabled model.
-# Uploads are accepted while this is False; analysis workers wait on this
-# event before entering the frame loop.
 _models_ready = threading.Event()
 _models_preload_started = False
 
-
 def preload_models() -> Dict[str, str]:
-    """Load every enabled AI model once in the background.
-
-    This function is intended to be called from a daemon startup thread. It
-    deliberately loads models sequentially to avoid a large CPU/RAM spike.
-    A failed optional model is recorded in ``_model_errors`` but does not
-    prevent the remaining models from loading. The ready event is set only
-    after all enabled models have been attempted.
-    """
     global _models_preload_started
 
     with _lock:
@@ -212,8 +128,6 @@ def preload_models() -> Dict[str, str]:
             try:
                 loader()
             except Exception:
-                # Individual loaders already capture their own errors, but
-                # keep the startup sequence alive if one ever leaks.
                 logger.exception("[STARTUP] Unexpected error loading %s model", name)
 
         loaded = [k for k, v in _model_status.items() if v == "loaded"]
@@ -228,21 +142,13 @@ def preload_models() -> Dict[str, str]:
 
     return dict(_model_status)
 
-
 def wait_for_models(timeout: float | None = None) -> bool:
-    """Wait until the background model preload has finished attempting loads."""
     return _models_ready.wait(timeout=timeout)
 
-
 def models_ready() -> bool:
-    """Return True when startup model loading has finished."""
     return _models_ready.is_set()
 
-
-# ============================================================
 # Paths
-# ============================================================
-
 def _repo_root() -> str:
     return os.path.abspath(
         os.path.join(
@@ -251,9 +157,7 @@ def _repo_root() -> str:
         )
     )
 
-
 def _model_path(filename: str) -> str:
-    """Return the first real checkpoint, skipping Git-LFS pointer files."""
     root = os.path.join(_repo_root(), "models")
     candidates = {
         "weapon.pt": ["weapon.pt", "best.pt"],
@@ -278,7 +182,6 @@ def _model_path(filename: str) -> str:
     return pointer or os.path.join(root, candidates[0])
 
 def _ensure_real_checkpoint(path: str) -> None:
-    """Reject Git-LFS pointer text instead of treating it as a model."""
     if not os.path.isfile(path):
         raise FileNotFoundError(path)
     size = os.path.getsize(path)
@@ -291,25 +194,17 @@ def _ensure_real_checkpoint(path: str) -> None:
                 "Run 'git lfs pull' and verify the file size."
             )
 
-
-# ============================================================
 # PyTorch helper
-# ============================================================
 
 def _get_torch():
     global _torch
-
     if _torch is None:
         import torch
         _torch = torch
 
     return _torch
 
-
-# ============================================================
 # Anomaly model architecture
-# ============================================================
-
 def _create_anomaly_model(
     torch_module,
     input_channels: int = 1,
@@ -439,10 +334,7 @@ def _create_anomaly_model(
     return ConvolutionalAutoencoder()
 
 
-# ============================================================
 # Lazy model loaders
-# ============================================================
-
 def _load_weapon_model() -> bool:
     global _weapon_model
 
@@ -480,13 +372,6 @@ def _load_weapon_model() -> bool:
 
 
 def _load_ocr_detector() -> bool:
-    """
-    Load the custom YOLO number-plate detector (OCR.pt).
-
-    Stage 1 only: this model produces bounding boxes for plates. It is
-    never used for text recognition.
-    """
-
     global _ocr_detection_model
 
     if _ocr_detection_model is not None:
@@ -525,21 +410,6 @@ def _load_ocr_detector() -> bool:
 
 
 def _load_ocr_recognizer() -> bool:
-    """
-    Load the official PaddleOCR English text-recognition model.
-
-    Stage 2 only: this model reads text from an already-cropped plate
-    image produced by the YOLO detector. It never runs detection and
-    never sees the full frame.
-
-    Uses the PaddleOCR v3 API. The old ``show_log`` constructor
-    argument (and other now-removed kwargs) is not passed - PaddleOCR
-    v3 raises ``ValueError: Unknown argument`` if you do.
-
-    Initialized exactly once (singleton) and cached in
-    ``_ocr_recognition_model`` for the lifetime of the process.
-    """
-
     global _ocr_recognition_model
 
     if _ocr_recognition_model is not None:
@@ -550,11 +420,6 @@ def _load_ocr_recognizer() -> bool:
 
     try:
         from paddleocr import TextRecognition
-
-        # TextRecognition is the standalone PaddleOCR v3 module for
-        # the recognition step only (no detection, no doc/orientation
-        # preprocessing) - exactly what we need for a pre-cropped
-        # plate image. Only officially supported v3 kwargs are used.
         _ocr_recognition_model = TextRecognition(
             model_name="en_PP-OCRv4_mobile_rec",
         )
@@ -577,43 +442,25 @@ def _load_ocr_recognizer() -> bool:
 
         return False
 
-
 def _load_ocr_model() -> bool:
-    """
-    Load both stages of the number-plate pipeline:
-      - YOLO detector (OCR.pt)
-      - PaddleOCR recognizer
-
-    Both are singletons; calling this repeatedly after a successful
-    load is a cheap no-op.
-    """
-
     detector_ok = _load_ocr_detector()
     recognizer_ok = _load_ocr_recognizer()
 
     return detector_ok and recognizer_ok
 
-
-# Compatibility with the function name used during testing.
 def _load_ocr_models() -> bool:
     return _load_ocr_model()
 
-
 def _load_anomaly_model() -> bool:
     global _anomaly_model
-
     if _anomaly_model is not None:
         return True
-
     if _model_status["anomaly"] == "failed":
         return False
-
     try:
         torch = _get_torch()
-
         path = _model_path("anomaly.pth")
         _ensure_real_checkpoint(path)
-
         checkpoint = torch.load(
             path,
             map_location=DEVICE,
@@ -759,13 +606,8 @@ def _load_violence_model() -> bool:
 
         return False
 
-
-# ============================================================
 # Crowd-density model (LWCC / DM-Count)
-# ============================================================
-
 def _load_crowd_model() -> bool:
-    """Load LWCC DM-Count once for the whole backend process."""
     global _crowd_model
 
     if not ENABLE_CROWD:
@@ -797,7 +639,6 @@ def _load_crowd_model() -> bool:
 
 
 def _load_face_model() -> bool:
-    """Load YuNet + SFace for person-of-interest re-identification."""
     if not ENABLE_FACE:
         _model_status["face"] = "disabled"
         return False
@@ -821,7 +662,6 @@ def _load_face_model() -> bool:
 
 
 def _run_crowd_detection(frame: np.ndarray) -> Tuple[float, bool]:
-    """Estimate people count and return (count, threshold_alert)."""
     if not ENABLE_CROWD or not _load_crowd_model():
         return 0.0, False
 
@@ -829,8 +669,6 @@ def _run_crowd_detection(frame: np.ndarray) -> Tuple[float, bool]:
 
     temp_path = None
     try:
-        # LWCC's public API accepts image paths. Write one temporary JPEG
-        # rather than changing the tested LWCC inference path.
         fd, temp_path = tempfile.mkstemp(
             prefix="netra_crowd_",
             suffix=".jpg",
@@ -846,7 +684,6 @@ def _run_crowd_detection(frame: np.ndarray) -> Tuple[float, bool]:
             resize_img=True,
         )
 
-        # LWCC returns a float count for a single image.
         count_f = float(count)
         return count_f, count_f >= CROWD_THRESHOLD
 
@@ -857,16 +694,8 @@ def _run_crowd_detection(frame: np.ndarray) -> Tuple[float, bool]:
             except OSError:
                 pass
 
-
-# ============================================================
 # Status
-# ============================================================
-
 def model_status() -> Dict[str, Any]:
-    """
-    Return model status without forcing models to load.
-    """
-
     with _lock:
         recognition_enabled = (
             _model_status["ocr_recognition"] == "loaded"
@@ -883,11 +712,7 @@ def model_status() -> Dict[str, Any]:
             ),
         }
 
-
-# ============================================================
 # False-positive rejection helpers
-# ============================================================
-
 def _bbox_iou(a: List[int], b: List[int]) -> float:
     ax1, ay1, ax2, ay2 = a
     bx1, by1, bx2, by2 = b
@@ -911,12 +736,6 @@ def _confirm_box_tracks(
     need_misses: int,
     iou_thresh: float,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """
-    Multi-frame confirmation for bbox detections.
-
-    A track must match (by IoU + type/label) for ``need_hits`` consecutive
-    inference passes before it is emitted. Flicker detections never leave.
-    """
     matched_track_ids: set = set()
     unmatched_raw = list(raw_dets)
 
@@ -926,7 +745,6 @@ def _confirm_box_tracks(
         for i, det in enumerate(unmatched_raw):
             if det.get("type") != track.get("type"):
                 continue
-            # For plates, prefer matching on plate_number when both have it.
             t_plate = track.get("plate_number")
             d_plate = det.get("plate_number")
             if t_plate and d_plate and t_plate != d_plate:
@@ -1002,8 +820,6 @@ def _confirm_box_tracks(
         for t in alive
         if t.get("confirmed")
     ]
-
-    # Drop None-only optional fields for weapon dets cleanliness
     cleaned: List[Dict[str, Any]] = []
     for d in confirmed:
         out = {
@@ -1028,8 +844,6 @@ def _confirm_box_tracks(
 
 
 class _BoolConfirm:
-    """Sticky confirm for frame-level signals (anomaly / violence)."""
-
     def __init__(self, need_hits: int, need_misses: int) -> None:
         self.need_hits = max(1, need_hits)
         self.need_misses = max(1, need_misses)
@@ -1050,11 +864,7 @@ class _BoolConfirm:
                 self.active = False
         return self.active
 
-
-# ============================================================
 # Weapon inference
-# ============================================================
-
 def _run_weapon_detection(
     frame: np.ndarray,
 ) -> List[Dict[str, Any]]:
@@ -1137,11 +947,7 @@ def _run_weapon_detection(
 
     return detections
 
-
-# ============================================================
 # Number-plate detection
-# ============================================================
-
 def _normalize_plate_text(text: str | None) -> str | None:
     """Keep A-Z / 0-9 only and require a minimum plate-like length."""
     if not text:
@@ -1155,17 +961,6 @@ def _normalize_plate_text(text: str | None) -> str | None:
 def _recognize_plate_text(
     plate_crop: np.ndarray,
 ) -> Tuple[str | None, float]:
-    """
-    Run PaddleOCR recognition on an already-cropped plate image.
-
-    Stage 2 only - no detection happens here, the crop is assumed to
-    already tightly bound the plate (produced by the YOLO detector in
-    ``_run_ocr``).
-
-    Returns (plate_text, ocr_confidence). plate_text is None if
-    nothing could be recognized.
-    """
-
     if _ocr_recognition_model is None:
         return None, 0.0
 
@@ -1179,10 +974,6 @@ def _recognize_plate_text(
     )
 
     for item in raw_results:
-
-        # PaddleOCR v3 pipeline results support both dict-style
-        # access and a `.json` accessor depending on how they are
-        # produced; handle both defensively.
         data = item
 
         if hasattr(data, "json"):
@@ -1209,17 +1000,6 @@ def _recognize_plate_text(
 def _run_ocr(
     frame: np.ndarray,
 ) -> List[Dict[str, Any]]:
-    """
-    Two-stage number-plate pipeline:
-
-      1. OCR.pt (YOLO) detects plate bounding boxes.
-      2. Each detected plate is cropped and passed to PaddleOCR for
-         text recognition.
-
-    PaddleOCR only ever sees the small cropped plate region, never
-    the full frame.
-    """
-
     if not ENABLE_OCR:
         return []
 
@@ -1323,9 +1103,6 @@ def _run_ocr(
                 y2,
             ],
         })
-
-    # Drop weak plate boxes with no readable text — those are the usual
-    # false positives (taillights, stickers, signage).
     filtered: List[Dict[str, Any]] = []
     for det in detections:
         if det.get("plate_number"):
@@ -1334,11 +1111,7 @@ def _run_ocr(
             filtered.append(det)
     return filtered
 
-
-# ============================================================
 # Anomaly inference
-# ============================================================
-
 def _run_anomaly(
     frame: np.ndarray,
     state: "FrameProcessor | None" = None,
@@ -1393,9 +1166,6 @@ def _run_anomaly(
 
     error_f = float(error)
 
-    # The standalone training/test pipeline uses a fixed 0.01 threshold.
-    # Do not calibrate from the uploaded clip: a fight/anomaly at the start
-    # would otherwise teach the detector that the abnormal scene is normal.
     threshold = ANOMALY_THRESHOLD
     if state is not None:
         state.anomaly_threshold = threshold
@@ -1403,11 +1173,7 @@ def _run_anomaly(
 
     return error_f > threshold, error_f
 
-
-# ============================================================
 # Violence inference
-# ============================================================
-
 def _update_violence(
     frame: np.ndarray,
     state: "FrameProcessor",
@@ -1438,9 +1204,6 @@ def _update_violence(
         len(state.violence_frames)
         < VIOLENCE_SEQUENCE_LENGTH
     ):
-        # Still gathering a clip — do NOT replay the last label.
-        # Replaying caused the confirm-gate to see fake NO FIGHT misses
-        # between real inferences and wiped true fights.
         return "PENDING", state.last_violence_confidence
 
     clip = np.array(
@@ -1494,10 +1257,6 @@ def _update_violence(
         state.last_violence_prediction = "FIGHT"
     else:
         state.last_violence_prediction = "NO FIGHT"
-
-    # Match the working standalone detector: retain the second half of the
-    # clip and add every 2nd source frame. This gives the model the same
-    # temporal overlap as training/video.py while keeping inference bounded.
     keep = list(state.violence_frames)[-VIOLENCE_RETAIN_FRAMES:]
     state.violence_frames.clear()
     state.violence_frames.extend(keep)
@@ -1508,11 +1267,7 @@ def _update_violence(
         state.last_violence_confidence,
     )
 
-
-# ============================================================
 # Drawing helpers
-# ============================================================
-
 def draw_detections_on_frame(
     frame: np.ndarray,
     detections: List[Dict[str, Any]],
@@ -1526,7 +1281,6 @@ def draw_detections_on_frame(
         _draw_detection(out, detection)
     return out
 
-
 def make_frame_level_detection(
     frame_w: int,
     frame_h: int,
@@ -1535,7 +1289,6 @@ def make_frame_level_detection(
     confidence: float = 0.0,
     margin: int = 14,
 ) -> Dict[str, Any]:
-    """Synthetic full-frame box for anomaly / violence report snapshots."""
     x1 = max(0, margin)
     y1 = max(0, margin)
     x2 = max(x1 + 1, int(frame_w) - margin)
@@ -1547,7 +1300,6 @@ def make_frame_level_detection(
         "bbox": [x1, y1, x2, y2],
         "frame_level": True,
     }
-
 
 def _detection_color(detection_type: str) -> Tuple[int, int, int]:
     t = (detection_type or "").lower()
@@ -1563,23 +1315,18 @@ def _detection_color(detection_type: str) -> Tuple[int, int, int]:
         return (180, 0, 220)
     return (0, 200, 0)
 
-
 def _draw_detection(
     frame: np.ndarray,
     detection: Dict[str, Any],
 ) -> None:
-
     bbox = detection.get("bbox")
     if not bbox:
         return
-
     x1, y1, x2, y2 = [int(v) for v in bbox]
     detection_type = str(detection.get("type", "") or "")
     color = _detection_color(detection_type)
     thickness = 3 if detection.get("frame_level") or detection_type in {"anomaly", "violence"} else 2
-
     cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
-
     if detection.get("frame_level") or detection_type in {"anomaly", "violence"}:
         corner = max(18, min(40, (x2 - x1) // 12))
         for (cx, cy, dx, dy) in (
@@ -1587,7 +1334,6 @@ def _draw_detection(
         ):
             cv2.line(frame, (cx, cy), (cx + dx * corner, cy), color, 3)
             cv2.line(frame, (cx, cy), (cx, cy + dy * corner), color, 3)
-
     label = detection.get("label", "")
     confidence = detection.get("confidence", 0.0)
     if detection_type in {"number_plate", "plate"} and detection.get("plate_number"):
@@ -1699,31 +1445,8 @@ def _draw_hud(
         cv2.LINE_AA,
     )
 
-
-# ============================================================
 # Main inference entry point
-# ============================================================
-
 class FrameProcessor:
-    """
-    One instance per analysis job / live camera session.
-
-    Holds all the state that used to be module-level globals (frame
-    counter, last detections, violence frame buffer, scene-change
-    baseline, per-stream stats), so multiple streams can be analyzed
-    concurrently -- by different upload jobs, or by different cameras --
-    without their results bleeding into each other.
-
-    The underlying models (weapon/ocr/anomaly/violence) are still shared
-    module-level singletons, loaded once regardless of how many
-    FrameProcessor instances exist -- that's intentional, models are
-    read-only at inference time and expensive to load per-stream.
-
-    Usage:
-        fp = FrameProcessor()
-        annotated, meta = fp.process_frame(frame, source_label="cam-1")
-    """
-
     def __init__(self, label: str = "") -> None:
         self.label = label
         self._instance_lock = threading.Lock()
@@ -1733,10 +1456,6 @@ class FrameProcessor:
         self.violence_frames = deque(
             maxlen=VIOLENCE_SEQUENCE_LENGTH
         )
-        # Run the expensive MC3-18 inference only after a fresh 16-frame
-        # clip has been collected. The old implementation retained 8 frames
-        # after inference and then ran MC3 again every 2 AI frames, causing
-        # dozens of full 3D-CNN passes and making uploads appear frozen.
         self.violence_inferences = 0
         self.last_violence_infer_frame = 0
 
@@ -1766,12 +1485,6 @@ class FrameProcessor:
         self.last_crowd_count = 0.0
         self.last_crowd_alert = False
 
-        # Small downsized grayscale snapshot of the last frame that was
-        # actually run through the weapon/anomaly models -- used by
-        # _frame_changed_significantly() to decide whether the scene has
-        # moved on enough to warrant another inference pass before the
-        # fixed interval comes around. Per-instance so one camera's scene
-        # changes don't reset another camera's baseline.
         self.last_checked_frame_small: Any = None
 
         self.stats: Dict[str, Any] = {
@@ -1785,17 +1498,7 @@ class FrameProcessor:
             return dict(self.stats)
 
     def _frame_changed_significantly(self, frame: np.ndarray) -> bool:
-        """
-        Cheap scene-change check so we don't burn CPU re-running
-        weapon/anomaly models on frames that are near-identical to the
-        last one THIS stream checked. Any frame that DOES differ
-        meaningfully is checked immediately, regardless of the fixed
-        interval, so a threat that suddenly appears isn't delayed
-        waiting for the next scheduled interval tick.
 
-        Returns True on the very first frame of this stream, since
-        there's nothing yet to compare against.
-        """
         small = cv2.resize(
             cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY),
             (48, 27),
@@ -1840,14 +1543,9 @@ class FrameProcessor:
             self.frame_counter += 1
             frame_number = self.frame_counter
 
-        # Cheap scene-change check, computed once and reused by both the
-        # weapon and anomaly gates below.
         scene_changed = self._frame_changed_significantly(frame)
 
-        # --------------------------------------------------------
         # Weapon
-        # --------------------------------------------------------
-
         if (
             frame_number == 1
             or scene_changed
@@ -1871,10 +1569,7 @@ class FrameProcessor:
                     "Weapon inference failed"
                 )
 
-        # --------------------------------------------------------
         # Number plate
-        # --------------------------------------------------------
-
         if (
             frame_number == 1
             or scene_changed
@@ -1898,10 +1593,7 @@ class FrameProcessor:
                     "Number-plate inference failed"
                 )
 
-        # --------------------------------------------------------
         # Anomaly
-        # --------------------------------------------------------
-
         if (
             frame_number == 1
             or scene_changed
@@ -1921,10 +1613,7 @@ class FrameProcessor:
                     "Anomaly inference failed"
                 )
 
-        # --------------------------------------------------------
         # Violence
-        # --------------------------------------------------------
-
         violence_prediction = (
             self.last_violence_prediction
         )
@@ -1952,7 +1641,6 @@ class FrameProcessor:
                 elif raw_violence == "NO FIGHT":
                     confirmed_fight = self._violence_gate.update(False)
                 else:
-                    # PENDING / COLLECTING / UNAVAILABLE — do not touch gate
                     confirmed_fight = self._violence_gate.active
 
                 if confirmed_fight:
@@ -1971,9 +1659,7 @@ class FrameProcessor:
                     "Violence inference failed"
                 )
 
-        # --------------------------------------------------------
         # Crowd density / count
-        # --------------------------------------------------------
         if (
             ENABLE_CROWD
             and (frame_number == 1 or frame_number % CROWD_INTERVAL == 0)
@@ -1995,9 +1681,7 @@ class FrameProcessor:
             except Exception:
                 logger.exception("Crowd-density inference failed")
 
-        # --------------------------------------------------------
         # Person-of-interest face re-identification
-        # --------------------------------------------------------
         if (
             ENABLE_FACE
             and (
@@ -2023,10 +1707,7 @@ class FrameProcessor:
             except Exception:
                 logger.exception("Face re-id inference failed")
 
-        # --------------------------------------------------------
         # Combined detections
-        # --------------------------------------------------------
-
         detections = (
             list(self.last_weapon_detections)
             + list(self.last_ocr_detections)
@@ -2154,20 +1835,7 @@ class FrameProcessor:
 
         return output_frame, meta
 
-
-# ------------------------------------------------------------
-# Backward-compatible module-level API.
-#
-# A handful of older call sites may still call frame_processor.
-# process_frame(...)/get_stats() directly rather than creating their own
-# FrameProcessor(). Those keep working via one shared default instance,
-# but note this default instance has the SAME single-stream limitation
-# the old global-state code had -- any new caller that wants proper
-# multi-stream isolation should create its own FrameProcessor() instead.
-# ------------------------------------------------------------
-
 _default_processor = FrameProcessor(label="default")
-
 
 def process_frame(
     frame: np.ndarray,
@@ -2181,7 +1849,5 @@ def process_frame(
         draw=draw,
     )
 
-
 def get_stats() -> Dict[str, Any]:
     return _default_processor.get_stats()
-    

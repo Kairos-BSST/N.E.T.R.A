@@ -1,22 +1,4 @@
-"""
-webhook_client.py
-------------------
-Outbound HTTP delivery for N.E.T.R.A alerts.
-
-Used by alerting.py the instant a rule matches (weapon / plate /
-anomaly / violence), so operators get notified without waiting for UI
-polls. Stdlib-only (urllib); every send runs on a daemon thread so a
-slow webhook never stalls analysis.
-
-Configure via env (bootstrap) and/or alert_config.json webhook routes:
-    WEBHOOK_URLS      comma-separated list of URLs (empty = disabled)
-    WEBHOOK_TIMEOUT   seconds, default 4 (keep under the sub-5s budget)
-    WEBHOOK_SECRET    optional HMAC-SHA256 shared secret
-    WEBHOOK_RETRIES   delivery attempts per URL, default 2
-"""
-
 from __future__ import annotations
-
 import hashlib
 import hmac
 import json
@@ -40,10 +22,8 @@ WEBHOOK_TIMEOUT: float = float(os.getenv("WEBHOOK_TIMEOUT", "4"))
 WEBHOOK_SECRET: str = os.getenv("WEBHOOK_SECRET", "")
 WEBHOOK_RETRIES: int = int(os.getenv("WEBHOOK_RETRIES", "2"))
 
-
 def configured_urls() -> List[str]:
     return list(WEBHOOK_URLS)
-
 
 def _sign(body: bytes, secret: str) -> str:
     return hmac.new(
@@ -51,7 +31,6 @@ def _sign(body: bytes, secret: str) -> str:
         body,
         hashlib.sha256,
     ).hexdigest()
-
 
 def _post(url: str, body: bytes, headers: Dict[str, str]) -> None:
     last_err: Optional[BaseException] = None
@@ -93,16 +72,12 @@ def _post(url: str, body: bytes, headers: Dict[str, str]) -> None:
     if last_err is not None:
         logger.error("Webhook gave up url=%s after %s attempts", url, WEBHOOK_RETRIES)
 
-
 def send_alert_webhook(
     payload: Dict[str, Any],
     *,
     urls: Optional[List[str]] = None,
     secret: Optional[str] = None,
 ) -> None:
-    """
-    Fire-and-forget alert delivery. `urls=None` uses env WEBHOOK_URLS.
-    """
     targets = [u.strip() for u in (urls if urls is not None else WEBHOOK_URLS) if u and u.strip()]
     if not targets:
         return
@@ -128,11 +103,6 @@ def send_alert_webhook(
 
 
 def send_event_webhook(job_id: str, event: Dict[str, Any]) -> None:
-    """
-    Legacy thin wrapper — prefer alerting.emit_from_event which applies
-    rules/watchlists and enriches snapshot/clip context. Kept so older
-    call sites and empty-rule fallbacks still work.
-    """
     if not WEBHOOK_URLS:
         return
 

@@ -1,4 +1,3 @@
-"""Shared runtime dependencies."""
 from config import Config
 from state_tracker import StateTracker
 import database

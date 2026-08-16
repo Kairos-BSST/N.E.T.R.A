@@ -1,13 +1,3 @@
-"""
-report_pdf.py
--------------
-Builds a downloadable forensic PDF report for one analysis job:
-source info, summary counters, and every logged event (timestamp,
-type, confidence, location, evidence thumbnail).
-
-Requires: pip install reportlab
-"""
-
 from __future__ import annotations
 
 import os
@@ -53,10 +43,6 @@ def _reports_dir() -> str:
 
 
 def _snapshot_path_from_url(snapshot_url: str) -> str:
-    """
-    snapshot_url looks like /snapshots/{job_id}/{event_id}.jpg — map that
-    back to the real file on disk under Config.SNAPSHOT_DIR.
-    """
     if "/evidence/snapshots/" in snapshot_url:
         rel = snapshot_url.split("/evidence/snapshots/", 1)[-1]
     else:
@@ -65,11 +51,6 @@ def _snapshot_path_from_url(snapshot_url: str) -> str:
 
 
 def build_report_pdf(job: Dict[str, Any]) -> str:
-    """
-    Build the PDF for a job dict (as returned by analysis_pipeline.get_job)
-    and return the path to the generated file.
-    """
-
     job_id = job.get("job_id", "unknown")
     out_path = os.path.join(_reports_dir(), f"{job_id}.pdf")
 

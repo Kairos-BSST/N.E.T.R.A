@@ -1,12 +1,3 @@
-"""
-face_reid.py
-------------
-Person-of-interest face detection + re-identification.
-
-Uses OpenCV Zoo models (YuNet detector + SFace recognizer). Models are
-downloaded once into models/face/ on first use.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -51,14 +42,12 @@ _gallery_loaded = False
 _status = "not_loaded"
 _error: Optional[str] = None
 
-
 def _download(url: str, dest: str) -> None:
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     tmp = dest + ".part"
     logger.info("Downloading face model -> %s", dest)
     urllib.request.urlretrieve(url, tmp)
     os.replace(tmp, dest)
-
 
 def _ensure_model(path: str, url: str) -> str:
     if os.path.isfile(path) and os.path.getsize(path) > 10_000:
@@ -67,7 +56,6 @@ def _ensure_model(path: str, url: str) -> str:
     if not os.path.isfile(path) or os.path.getsize(path) < 10_000:
         raise RuntimeError(f"Failed to download face model: {path}")
     return path
-
 
 def ensure_models() -> bool:
     global _detector, _recognizer, _status, _error
@@ -95,21 +83,17 @@ def ensure_models() -> bool:
             logger.exception("Unable to load face re-id models")
             return False
 
-
 def status() -> Dict[str, Any]:
     return {"status": _status, "error": _error, "gallery_size": len(_gallery)}
-
 
 def _align_crop(frame: np.ndarray, face_row: np.ndarray) -> np.ndarray:
     assert _recognizer is not None
     return _recognizer.alignCrop(frame, face_row)
 
-
 def _embed(aligned: np.ndarray) -> np.ndarray:
     assert _recognizer is not None
     feat = _recognizer.feature(aligned)
     return np.asarray(feat, dtype=np.float32).reshape(-1)
-
 
 def detect_faces(frame: np.ndarray) -> List[Dict[str, Any]]:
     if frame is None or frame.size == 0:
@@ -139,7 +123,6 @@ def detect_faces(frame: np.ndarray) -> List[Dict[str, Any]]:
         out.append({"bbox": [x1, y1, x2, y2], "score": score, "face_row": row})
     return out
 
-
 def embed_face_in_image(image_bgr: np.ndarray) -> Tuple[Optional[np.ndarray], Optional[Dict[str, Any]]]:
     faces = detect_faces(image_bgr)
     if not faces:
@@ -154,14 +137,11 @@ def embed_face_in_image(image_bgr: np.ndarray) -> Tuple[Optional[np.ndarray], Op
         vec = _embed(aligned)
     return vec, {"bbox": top["bbox"], "score": top["score"]}
 
-
 def embedding_to_bytes(vec: np.ndarray) -> bytes:
     return np.asarray(vec, dtype=np.float32).tobytes()
 
-
 def embedding_from_bytes(raw: bytes) -> np.ndarray:
     return np.frombuffer(raw, dtype=np.float32).copy()
-
 
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     a = np.asarray(a, dtype=np.float32).reshape(-1)
@@ -170,7 +150,6 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     if denom <= 1e-8:
         return 0.0
     return float(np.dot(a, b) / denom)
-
 
 def reload_gallery(entries: List[Dict[str, Any]]) -> int:
     global _gallery, _gallery_loaded
@@ -199,7 +178,6 @@ def reload_gallery(entries: List[Dict[str, Any]]) -> int:
     logger.info("Face gallery reloaded: %d embeddings", len(loaded))
     return len(loaded)
 
-
 def ensure_gallery_loaded() -> None:
     global _gallery_loaded
     if _gallery_loaded:
@@ -212,7 +190,6 @@ def ensure_gallery_loaded() -> None:
         logger.exception("Could not load POI face gallery from database")
         with _lock:
             _gallery_loaded = True
-
 
 def match_embedding(vec: np.ndarray, threshold: Optional[float] = None) -> Optional[Dict[str, Any]]:
     ensure_gallery_loaded()
@@ -235,7 +212,6 @@ def match_embedding(vec: np.ndarray, threshold: Optional[float] = None) -> Optio
         "similarity": round(best_score, 4),
         "threshold": thr,
     }
-
 
 def match_frame(frame: np.ndarray, *, threshold: Optional[float] = None) -> List[Dict[str, Any]]:
     if not ensure_models():
