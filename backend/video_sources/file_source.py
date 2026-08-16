@@ -1,23 +1,13 @@
-"""
-FileSource — continuous frames from a local video file (upload path).
-"""
-
 from __future__ import annotations
-
 import logging
 import os
 from typing import Optional
-
 import cv2
-
 from video_sources.base import InvalidStreamUrlError, VideoSource, VideoSourceError
 
 logger = logging.getLogger("netra.video.file")
 
-
 class FileSource(VideoSource):
-    """Reads frames from a video file on disk using the shared VideoSource API."""
-
     source_kind = "file"
 
     def __init__(self, path: str, *, loop: bool = False):

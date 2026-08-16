@@ -1,26 +1,13 @@
-"""
-inputs/upload.py
-----------------
-Local device video upload.
-
-Uploaded videos are saved locally, registered with the application,
-queued for analysis, and then processed asynchronously through the
-shared N.E.T.R.A AI pipeline.
-"""
-
 import logging
 import os
 import uuid
-
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from auth import current_user
-
 import analysis_pipeline
 import database
 from config import Config
 from deps import state
 from file_utils import is_allowed_video, safe_filename
-
 
 logger = logging.getLogger("netra.upload")
 
@@ -29,25 +16,11 @@ router = APIRouter(tags=["upload"])
 
 @router.post("/upload")
 async def upload_video(file: UploadFile = File(...), user=Depends(current_user)):
-    """
-    Accept a video from the Signal Intake upload panel.
-
-    The video is:
-    1. validated,
-    2. saved locally,
-    3. registered,
-    4. queued for analysis,
-    5. analysed asynchronously in the background.
-    """
-
     original = file.filename or "video"
     name = safe_filename(original)
     content_type = file.content_type
 
-    # --------------------------------------------------------
     # Validate file type
-    # --------------------------------------------------------
-
     if not is_allowed_video(
         name,
         content_type,
@@ -62,12 +35,8 @@ async def upload_video(file: UploadFile = File(...), user=Depends(current_user))
             ),
         )
 
-    # --------------------------------------------------------
     # Generate safe unique filename
-    # --------------------------------------------------------
-
     stem, ext = os.path.splitext(name)
-
     unique_name = (
         f"{stem}_"
         f"{uuid.uuid4().hex[:8]}"
@@ -85,27 +54,17 @@ async def upload_video(file: UploadFile = File(...), user=Depends(current_user))
 
     chunk_size = 1024 * 1024
 
-    # --------------------------------------------------------
     # Save uploaded video
-    # --------------------------------------------------------
-
     try:
-
         with open(local_path, "wb") as out:
-
             while True:
-
                 chunk = await file.read(
                     chunk_size
                 )
-
                 if not chunk:
                     break
-
                 size += len(chunk)
-
                 if size > Config.MAX_UPLOAD_BYTES:
-
                     out.close()
 
                     try:
@@ -122,7 +81,6 @@ async def upload_video(file: UploadFile = File(...), user=Depends(current_user))
                             "bytes."
                         ),
                     )
-
                 out.write(chunk)
 
     except HTTPException:
@@ -135,7 +93,6 @@ async def upload_video(file: UploadFile = File(...), user=Depends(current_user))
         )
 
         try:
-
             if os.path.isfile(local_path):
                 os.remove(local_path)
 
@@ -151,10 +108,7 @@ async def upload_video(file: UploadFile = File(...), user=Depends(current_user))
 
         await file.close()
 
-    # --------------------------------------------------------
     # Reject empty uploads
-    # --------------------------------------------------------
-
     if size == 0:
 
         try:
@@ -167,20 +121,14 @@ async def upload_video(file: UploadFile = File(...), user=Depends(current_user))
             detail="Empty file uploaded.",
         )
 
-    # --------------------------------------------------------
     # Register fetched/local media
-    # --------------------------------------------------------
-
     state.mark_fetched(
         f"upload:{unique_name}",
         local_path,
         size,
     )
 
-    # --------------------------------------------------------
     # Create analysis job
-    # --------------------------------------------------------
-
     analysis = (
         analysis_pipeline.queue_for_analysis(
             source=analysis_pipeline.SOURCE_UPLOAD,
@@ -200,10 +148,7 @@ async def upload_video(file: UploadFile = File(...), user=Depends(current_user))
         details={"original_name": original, "source": "upload", "size_bytes": size},
     )
 
-    # --------------------------------------------------------
     # Start background analysis
-    # --------------------------------------------------------
-
     try:
 
         analysis = (
@@ -235,10 +180,7 @@ async def upload_video(file: UploadFile = File(...), user=Depends(current_user))
         if updated is not None:
             analysis = updated
 
-    # --------------------------------------------------------
     # Response
-    # --------------------------------------------------------
-
     return {
         "status": "uploaded",
         "original_name": original,

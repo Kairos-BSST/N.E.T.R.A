@@ -1,16 +1,4 @@
-"""
-inputs/live.py
---------------
-Live CCTV / RTSP / webcam intake.
-
-Connection methods:
-  1. Brand form (Hikvision / Dahua / CP Plus) → RTSP URL
-  2. Custom RTSP URL paste
-  3. Local webcam (cv2.VideoCapture) — same VideoSource contract as CCTV
-"""
-
 from __future__ import annotations
-
 import logging
 import time
 from typing import Literal, Optional
@@ -200,11 +188,6 @@ def live_frame(user=Depends(current_user)):
 
 @router.get("/live/stream")
 def live_stream(user=Depends(current_user)):
-    """
-    MJPEG stream of the latest frame (updates as the capture loop runs).
-    Prefer /live/frame polling in the browser for broader compatibility.
-    """
-
     def generate():
         last_version = -1
         while True:
@@ -234,15 +217,12 @@ def live_stream(user=Depends(current_user)):
         },
     )
 
-
-# Backwards-compatible placeholder used by older frontend mocks.
 class LiveAnalyzeRequest(BaseModel):
     stream_url: str = Field(..., min_length=1)
 
 
 @router.post("/analysis/live")
 def queue_live_analysis(req: LiveAnalyzeRequest, user=Depends(current_user)):
-    """Legacy queue-only endpoint — prefer /live/connect + /live/start."""
     import analysis_pipeline
 
     url = (req.stream_url or "").strip()

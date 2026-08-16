@@ -1,23 +1,13 @@
-"""
-WebcamSource — local camera via OpenCV, same interface as CCTV RTSP.
-"""
-
 from __future__ import annotations
-
 import logging
 import sys
 from typing import Optional
-
 import cv2
-
 from video_sources.base import VideoSource, WebcamUnavailableError
 
 logger = logging.getLogger("netra.video.webcam")
 
-
 class WebcamSource(VideoSource):
-    """Treats cv2.VideoCapture(index) exactly like a live CCTV stream."""
-
     source_kind = "webcam"
 
     def __init__(self, device_index: int = 0, *, width: int = 1280, height: int = 720):
@@ -32,8 +22,6 @@ class WebcamSource(VideoSource):
 
     def connect(self) -> None:
         self.release()
-
-        # CAP_DSHOW is more reliable on Windows; fall back to default elsewhere.
         backends = []
         if sys.platform.startswith("win"):
             backends.append(cv2.CAP_DSHOW)
