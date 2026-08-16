@@ -142,7 +142,7 @@ For installation, environment configuration, and setup instructions, refer to:
 
 ## API Documentation
 
-The auromatically generated Swagger UI can be viewed upon starting the project at: 
+The automatically generated Swagger UI can be viewed upon starting the project at: 
 
 http://127.0.0.1:8000/docs
 
@@ -154,7 +154,7 @@ A supplementary API reference is available in:
 
 ## Database Schema
 
-The database structure, tables, relationships, and integrity mechanisms are documented in:
+The database structure, tables and relationships are documented in:
 
 [schema.md](schema.md)
 
