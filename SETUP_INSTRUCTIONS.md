@@ -51,6 +51,7 @@ Add the following redirect URI:
 
 ```text
 http://127.0.0.1:8000/auth/google/callback
+
 ### Step 3: Configure Test User
 
 If the OAuth application is in **Testing** mode, the Google account used to test the application must be added as a **Test User**.
