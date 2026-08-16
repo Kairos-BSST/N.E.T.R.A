@@ -79,7 +79,7 @@ backend/.env
 backend/env
 poi_gallery/
 backend/poi_gallery/
-models/face/
+
 
 # Testing
 backend/tests/
